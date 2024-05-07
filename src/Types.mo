@@ -153,7 +153,7 @@ module {
         bonusEndTime : Nat;
         lastRewardTime : Nat;
         rewardPerTime : Nat;
-        rewardTokenTax : Nat;
+        rewardFee : Nat;
         accPerShare : Nat;
         totalDeposit : Nat;
         rewardDebt : Nat;
@@ -204,7 +204,8 @@ module {
         stakingTokenSymbol : Text;
         stakingTokenFee : Nat;
 
-        rewardTokenTax : Nat;
+        rewardFee : Nat;
+        feeReceiverCid : Principal;
     };
 
     public type UpdateStakingPool = {
@@ -249,8 +250,8 @@ module {
         setAutoUnlockTimes : shared Nat -> async Result.Result<Nat, Text>;
         stop : shared () -> async Result.Result<PublicStakingPoolInfo, Text>;
         setTime : shared (startTime : Nat, bonusEndTime : Nat) -> async Result.Result<PublicStakingPoolInfo, Text>;
-        unclaimdRewardTokenTaxFee : query () -> async Result.Result<Nat, Text>;
-        claimTaxFee : shared Principal -> async Result.Result<Text,Text>;
+        unclaimdRewardFee : query () -> async Result.Result<Nat, Text>;
+        withdrawRewardFee : shared () -> async Result.Result<Text,Text>;
 
         deposit : shared () -> async Result.Result<Text, Text>;
         harvest : shared () -> async Result.Result<Nat, Text>;
@@ -260,6 +261,14 @@ module {
         getUserInfo : query Principal -> async Result.Result<PublicUserInfo, Text>;
         getPoolInfo : query () -> async Result.Result<PublicStakingPoolInfo, Text>;
         pendingReward : query Principal -> async Result.Result<Nat, Text>;
+    };
+
+    public type StakingFeeReceiver = {
+        #claim : () -> (Principal);
+        #getCycleInfo : () -> ();
+        #getVersion : () -> ();
+        #transfer : () -> (Token, Principal, Nat);
+        #transferAll : () -> (Token, Principal);
     };
 
 };

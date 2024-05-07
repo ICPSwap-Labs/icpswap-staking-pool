@@ -1,8 +1,17 @@
 {
     "canisters": {
+        "StakingFeeReceiver": {
+            "main": "./src/StakingFeeReceiver.mo",
+            "type": "motoko"
+        },
         "StakingPoolFactory": {
             "main": "./src/StakingPoolFactory.mo",
             "type": "motoko"
+        },
+        "TestTokenA": {
+            "wasm": "./test/icrc2/icrc2.wasm",
+            "type": "custom",
+            "candid": "./test/icrc2/icrc2.did"
         }
     },
     "defaults": {

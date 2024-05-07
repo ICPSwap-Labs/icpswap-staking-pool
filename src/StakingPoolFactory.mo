@@ -26,63 +26,60 @@ import Types "Types";
 import StakingPool "StakingPool";
 
 shared (initMsg) actor class StakingPoolController(
-    governanceCid : ?Principal
+    feeReceiverCid : Principal,
+    governanceCid : ?Principal,
 ) = this {
 
-    type GlobalDataState = Types.GlobalDataState;
-    type GlobalDataInfo = Types.GlobalDataInfo;
-    type TokenGlobalDataState = Types.TokenGlobalDataState;
-    type TokenGlobalDataInfo = Types.TokenGlobalDataInfo;
-
-    private stable var globalDataState : GlobalDataState = {
+    private stable var _globalDataState : Types.GlobalDataState = {
         var stakingAmount : Float = 0;
         var rewardAmount : Float = 0;
     };
 
     private var _initCycles : Nat = 1860000000000;
-    private var _rewardTokenTax : Nat = 5;
-    private stable var tokenPriceCanisterId = "arfra-7aaaa-aaaag-qb2aq-cai";
+    private var _rewardFee : Nat = 5;
+    private stable var _tokenPriceCanisterId = "arfra-7aaaa-aaaag-qb2aq-cai";
 
-    private stable var stakingPoolList : [(Principal, Types.StakingPoolInfo)] = [];
-    private var stakingPoolMap = HashMap.fromIter<Principal, Types.StakingPoolInfo>(stakingPoolList.vals(), 10, Principal.equal, Principal.hash);
+    private stable var _stakingPoolList : [(Principal, Types.StakingPoolInfo)] = [];
+    private var _stakingPoolMap = HashMap.fromIter<Principal, Types.StakingPoolInfo>(_stakingPoolList.vals(), 10, Principal.equal, Principal.hash);
 
-    private stable var stakingPoolStatList : [(Principal, TokenGlobalDataState)] = [];
-    private var stakingPoolStatMap = HashMap.fromIter<Principal, TokenGlobalDataState>(stakingPoolStatList.vals(), 10, Principal.equal, Principal.hash);
+    private stable var _stakingPoolStatList : [(Principal, Types.TokenGlobalDataState)] = [];
+    private var _stakingPoolStatMap = HashMap.fromIter<Principal, Types.TokenGlobalDataState>(_stakingPoolStatList.vals(), 10, Principal.equal, Principal.hash);
 
-    //system begin
     system func preupgrade() {
-        stakingPoolList := Iter.toArray(stakingPoolMap.entries());
-        stakingPoolStatList := Iter.toArray(stakingPoolStatMap.entries());
+        _stakingPoolList := Iter.toArray(_stakingPoolMap.entries());
+        _stakingPoolStatList := Iter.toArray(_stakingPoolStatMap.entries());
     };
     system func postupgrade() {
-        stakingPoolList := [];
-        stakingPoolStatList := [];
+        _stakingPoolList := [];
+        _stakingPoolStatList := [];
     };
-    //system end
 
-    //timer begin
     public shared (msg) func stopTimer() : async () {
         _checkAdminPermission(msg.caller);
-        Timer.cancelTimer(updateStakingPoolsGlobalDataId);
+        Timer.cancelTimer(_updateStakingPoolsGlobalDataId);
     };
-    //timer end
 
-    //admin func begin
-    public shared (msg) func setRewardTokenTax(taxRate : Nat) : async Result.Result<Bool, Text> {
+    public shared (msg) func setRewardFee(rewardFee : Nat) : async Result.Result<Bool, Text> {
         _checkAdminPermission(msg.caller);
-        _rewardTokenTax := taxRate;
+        _rewardFee := rewardFee;
+        return #ok(true);
+    };
+
+    public shared (msg) func setTokenPriceCanister(tokenPrice : Principal) : async Result.Result<Bool, Text> {
+        _checkAdminPermission(msg.caller);
+        _tokenPriceCanisterId := Principal.toText(tokenPrice);
         return #ok(true);
     };
 
     public shared (msg) func setStakingPoolTime(poolCanister : Principal, startTime : Nat, bonusEndTime : Nat) : async Result.Result<Types.StakingPoolInfo, Text> {
         _checkAdminPermission(msg.caller);
-        switch (stakingPoolMap.get(poolCanister)) {
+        switch (_stakingPoolMap.get(poolCanister)) {
             case (?stakingPoolInfo) {
                 let stakingPoolCanister = actor (Principal.toText(poolCanister)) : Types.IStakingPool;
                 switch (await stakingPoolCanister.setTime(startTime, bonusEndTime)) {
                     case (#ok(publicStakingPoolInfo)) {
-                        var newStakingPoolInfo : Types.StakingPoolInfo = publicStakingPoolToStakingPoolInfo(publicStakingPoolInfo, stakingPoolInfo);
-                        stakingPoolMap.put(poolCanister, newStakingPoolInfo);
+                        var newStakingPoolInfo : Types.StakingPoolInfo = _publicStakingPoolToStakingPoolInfo(publicStakingPoolInfo, stakingPoolInfo);
+                        _stakingPoolMap.put(poolCanister, newStakingPoolInfo);
                         return #ok(newStakingPoolInfo);
                     };
                     case (#err(message)) {
@@ -97,13 +94,13 @@ shared (initMsg) actor class StakingPoolController(
 
     public shared (msg) func stopStakingPool(poolCanister : Principal) : async Result.Result<Types.StakingPoolInfo, Text> {
         _checkAdminPermission(msg.caller);
-        switch (stakingPoolMap.get(poolCanister)) {
+        switch (_stakingPoolMap.get(poolCanister)) {
             case (?stakingPoolInfo) {
                 let stakingPoolCanister = actor (Principal.toText(poolCanister)) : Types.IStakingPool;
                 switch (await stakingPoolCanister.stop()) {
                     case (#ok(publicStakingPoolInfo)) {
-                        var newStakingPoolInfo : Types.StakingPoolInfo = publicStakingPoolToStakingPoolInfo(publicStakingPoolInfo, stakingPoolInfo);
-                        stakingPoolMap.put(poolCanister, newStakingPoolInfo);
+                        var newStakingPoolInfo : Types.StakingPoolInfo = _publicStakingPoolToStakingPoolInfo(publicStakingPoolInfo, stakingPoolInfo);
+                        _stakingPoolMap.put(poolCanister, newStakingPoolInfo);
                         return #ok(newStakingPoolInfo);
                     };
                     case (#err(message)) {
@@ -124,7 +121,8 @@ shared (initMsg) actor class StakingPoolController(
         };
         Cycles.add<system>(_initCycles);
         let requests : Types.InitRequests = {
-            params with rewardTokenTax = _rewardTokenTax;
+            params with rewardFee = _rewardFee;
+            feeReceiverCid = feeReceiverCid;
         };
         let stakingPool = await StakingPool.StakingPool(requests);
         let stakingPoolCanister : Principal = Principal.fromActor(stakingPool);
@@ -136,36 +134,29 @@ shared (initMsg) actor class StakingPoolController(
                 await IC0.update_settings_add_controller(stakingPoolCanister, initMsg.caller);
             };
         };
-        var stakingPoolInfo : Types.StakingPoolInfo = initParamToStakingPoolInfo(params, msg.caller, stakingPoolCanister);
-        stakingPoolMap.put(stakingPoolCanister, stakingPoolInfo);
+        var stakingPoolInfo : Types.StakingPoolInfo = _initParamToStakingPoolInfo(params, msg.caller, stakingPoolCanister);
+        _stakingPoolMap.put(stakingPoolCanister, stakingPoolInfo);
         return #ok(stakingPoolInfo.canisterId);
     };
 
     public shared (msg) func deleteStakingPool(poolCanister : Principal) : async Result.Result<Bool, Text> {
         _checkAdminPermission(msg.caller);
-        stakingPoolMap.delete(poolCanister);
+        _stakingPoolMap.delete(poolCanister);
         return #ok(true);
     };
 
-    public shared (msg) func unclaimdTaxFee(poolCanister : Principal) : async Result.Result<Nat, Text> {
+    public shared (msg) func unclaimdRewardFee(poolCanister : Principal) : async Result.Result<Nat, Text> {
         _checkAdminPermission(msg.caller);
         let stakingPoolCanister = actor (Principal.toText(poolCanister)) : Types.IStakingPool;
-        await stakingPoolCanister.unclaimdRewardTokenTaxFee();
+        await stakingPoolCanister.unclaimdRewardFee();
     };
-
-    public shared (msg) func claimTaxFee(poolCanister : Principal, to : Principal) : async Result.Result<Text, Text> {
-        _checkAdminPermission(msg.caller);
-        let stakingPoolCanister = actor (Principal.toText(poolCanister)) : Types.IStakingPool;
-        await stakingPoolCanister.claimTaxFee(to);
-    };
-    //admin func end
 
     public query func getInitArgs() : async Result.Result<{ governanceCid : ?Principal }, Types.Error> {
         #ok({ governanceCid = governanceCid });
     };
 
     public query func getStakingPool(poolCanisterId : Principal) : async Result.Result<Types.StakingPoolInfo, Text> {
-        switch (stakingPoolMap.get(poolCanisterId)) {
+        switch (_stakingPoolMap.get(poolCanisterId)) {
             case (?poolCanister) {
                 return #ok(poolCanister);
             };
@@ -177,7 +168,7 @@ shared (initMsg) actor class StakingPoolController(
 
     //1.no start,2.ongoing,3.ended
     public query func findStakingPoolPage(state : ?Nat, offset : Nat, limit : Nat) : async Result.Result<Types.Page<(Types.StakingPoolInfo)>, Types.Page<(Types.StakingPoolInfo)>> {
-        var buffer : Buffer.Buffer<(Types.StakingPoolInfo)> = Buffer.Buffer<(Types.StakingPoolInfo)>(stakingPoolMap.size());
+        var buffer : Buffer.Buffer<(Types.StakingPoolInfo)> = Buffer.Buffer<(Types.StakingPoolInfo)>(_stakingPoolMap.size());
         var reqState : Nat = 0;
         var reqStateState : Bool = false;
         if (not Option.isNull(state)) {
@@ -186,7 +177,7 @@ shared (initMsg) actor class StakingPoolController(
         };
         let currentTime = _getTime();
         var addBuffer = false;
-        for ((stakingPoolCanister, stakingPoolInfo) in stakingPoolMap.entries()) {
+        for ((stakingPoolCanister, stakingPoolInfo) in _stakingPoolMap.entries()) {
             Debug.print("findStakingPoolPage debug: " # debug_show (stakingPoolInfo));
             addBuffer := false;
             if (reqStateState) {
@@ -227,10 +218,10 @@ shared (initMsg) actor class StakingPoolController(
         });
     };
 
-    public query func getGlobalData() : async Result.Result<GlobalDataInfo, Text> {
+    public query func getGlobalData() : async Result.Result<Types.GlobalDataInfo, Text> {
         var stakingAmount : Float = 0;
         var rewardAmount : Float = 0;
-        for ((id, stat) in stakingPoolStatMap.entries()) {
+        for ((id, stat) in _stakingPoolStatMap.entries()) {
             stakingAmount := Float.add(stat.stakingAmount, stakingAmount);
             rewardAmount := Float.add(stat.rewardAmount, rewardAmount);
         };
@@ -240,8 +231,8 @@ shared (initMsg) actor class StakingPoolController(
         });
     };
 
-    public query func getPoolStatInfo(stakingPoolCanisterId : Principal) : async Result.Result<TokenGlobalDataInfo, Text> {
-        switch (stakingPoolStatMap.get(stakingPoolCanisterId)) {
+    public query func getPoolStatInfo(stakingPoolCanisterId : Principal) : async Result.Result<Types.TokenGlobalDataInfo, Text> {
+        switch (_stakingPoolStatMap.get(stakingPoolCanisterId)) {
             case (?stat) {
                 #ok({
                     stakingTokenCanisterId = stat.stakingTokenCanisterId;
@@ -260,9 +251,9 @@ shared (initMsg) actor class StakingPoolController(
         };
     };
 
-    public query func findPoolStatInfo() : async Result.Result<[TokenGlobalDataInfo], Text> {
-        var buffer : Buffer.Buffer<(TokenGlobalDataInfo)> = Buffer.Buffer<(TokenGlobalDataInfo)>(stakingPoolStatMap.size());
-        for ((id, stat) in stakingPoolStatMap.entries()) {
+    public query func findPoolStatInfo() : async Result.Result<[Types.TokenGlobalDataInfo], Text> {
+        var buffer : Buffer.Buffer<Types.TokenGlobalDataInfo> = Buffer.Buffer<Types.TokenGlobalDataInfo>(_stakingPoolStatMap.size());
+        for ((id, stat) in _stakingPoolStatMap.entries()) {
             buffer.add({
                 stakingTokenCanisterId = stat.stakingTokenCanisterId;
                 stakingTokenAmount = stat.stakingTokenAmount;
@@ -277,7 +268,7 @@ shared (initMsg) actor class StakingPoolController(
         return #ok(Buffer.toArray(buffer));
     };
 
-    private func initParamToStakingPoolInfo(params : Types.InitRequest, caller : Principal, stakingPoolCanister : Principal) : Types.StakingPoolInfo {
+    private func _initParamToStakingPoolInfo(params : Types.InitRequest, caller : Principal, stakingPoolCanister : Principal) : Types.StakingPoolInfo {
         let nowTime = _getTime();
         var stakingPoolInfo : Types.StakingPoolInfo = {
             creator = caller;
@@ -300,7 +291,7 @@ shared (initMsg) actor class StakingPoolController(
         return stakingPoolInfo;
     };
 
-    private func publicStakingPoolToStakingPoolInfo(params : Types.PublicStakingPoolInfo, poolInfo : Types.StakingPoolInfo) : Types.StakingPoolInfo {
+    private func _publicStakingPoolToStakingPoolInfo(params : Types.PublicStakingPoolInfo, poolInfo : Types.StakingPoolInfo) : Types.StakingPoolInfo {
         var stakingPoolInfo : Types.StakingPoolInfo = {
             rewardToken = params.rewardToken;
             rewardTokenSymbol = params.rewardTokenSymbol;
@@ -321,11 +312,11 @@ shared (initMsg) actor class StakingPoolController(
         return stakingPoolInfo;
     };
 
-    private func updateStakingPoolsGlobalData() : async () {
+    private func _updateStakingPoolsGlobalData() : async () {
         var stakingAmountTmp : Float = 0;
         var rewardAmountTmp : Float = 0;
-        var tokenPrice = Types.TokenPrice(?tokenPriceCanisterId);
-        for ((stakingPoolCanisterId, stakingPool) in stakingPoolMap.entries()) {
+        var tokenPrice = Types.TokenPrice(?_tokenPriceCanisterId);
+        for ((stakingPoolCanisterId, stakingPool) in _stakingPoolMap.entries()) {
             try {
                 var totalRewardAmount = 0;
                 var totalStakingAmount = 0;
@@ -370,12 +361,12 @@ shared (initMsg) actor class StakingPoolController(
                     var rewardTokenPrice = rewardTokenIcpPrice;
                     var rewardAmount = tokenRewardAmountVaule;
                 };
-                stakingPoolStatMap.put(stakingPoolCanisterId, stakingPoolGlobalStat);
+                _stakingPoolStatMap.put(stakingPoolCanisterId, stakingPoolGlobalStat);
             } catch (e) {
                 Debug.print("err: " # Error.message(e));
             };
         };
-        globalDataState := {
+        _globalDataState := {
             var stakingAmount = stakingAmountTmp;
             var rewardAmount = rewardAmountTmp;
         };
@@ -416,8 +407,7 @@ shared (initMsg) actor class StakingPoolController(
         });
     };
 
-    var updateStakingPoolsGlobalDataId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(600), updateStakingPoolsGlobalData);
-    // --------------------------- Version Control ------------------------------------
+    let _updateStakingPoolsGlobalDataId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(600), _updateStakingPoolsGlobalData);
     private var _version : Text = "1.0.0";
     public query func getVersion() : async Text { _version };
 };
