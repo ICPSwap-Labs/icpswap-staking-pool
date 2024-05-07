@@ -147,13 +147,13 @@ shared (initMsg) actor class StakingPoolController(
         return #ok(true);
     };
 
-    public shared (msg) func queryUnclaimdRewardTokenTaxFee(poolCanister : Principal) : async Result.Result<Nat, Text> {
+    public shared (msg) func unclaimdTaxFee(poolCanister : Principal) : async Result.Result<Nat, Text> {
         _checkAdminPermission(msg.caller);
         let stakingPoolCanister = actor (Principal.toText(poolCanister)) : Types.IStakingPool;
         await stakingPoolCanister.unclaimdRewardTokenTaxFee();
     };
 
-    public shared (msg) func claimdTaxFee(poolCanister : Principal, to : Principal) : async Result.Result<Text, Text> {
+    public shared (msg) func claimTaxFee(poolCanister : Principal, to : Principal) : async Result.Result<Text, Text> {
         _checkAdminPermission(msg.caller);
         let stakingPoolCanister = actor (Principal.toText(poolCanister)) : Types.IStakingPool;
         await stakingPoolCanister.claimTaxFee(to);
