@@ -1,0 +1,15 @@
+{
+    "canisters": {
+        "StakingPoolFactory": {
+            "main": "./src/StakingPoolFactory.mo",
+            "type": "motoko"
+        }
+    },
+    "defaults": {
+        "build": {
+            "packtool": "vessel sources"
+        }
+    },
+    "output_env_file": ".env",
+    "version": 1
+}
