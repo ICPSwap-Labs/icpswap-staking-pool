@@ -36,7 +36,7 @@ shared (initMsg) actor class StakingPoolController(
     };
 
     private var _initCycles : Nat = 1860000000000;
-    private var _rewardFee : Nat = 5;
+    private stable var _rewardFee : Nat = 5;
     private stable var _tokenPriceCanisterId = "arfra-7aaaa-aaaag-qb2aq-cai";
 
     private stable var _stakingPoolList : [(Principal, Types.StakingPoolInfo)] = [];
@@ -123,6 +123,8 @@ shared (initMsg) actor class StakingPoolController(
         let requests : Types.InitRequests = {
             params with rewardFee = _rewardFee;
             feeReceiverCid = feeReceiverCid;
+            creator = msg.caller;
+            createTime = _getTime();
         };
         let stakingPool = await StakingPool.StakingPool(requests);
         let stakingPoolCanister : Principal = Principal.fromActor(stakingPool);
@@ -151,8 +153,8 @@ shared (initMsg) actor class StakingPoolController(
         await stakingPoolCanister.unclaimdRewardFee();
     };
 
-    public query func getInitArgs() : async Result.Result<{ governanceCid : ?Principal }, Types.Error> {
-        #ok({ governanceCid = governanceCid });
+    public query func getInitArgs() : async Result.Result<{ feeReceiverCid : Principal; governanceCid : ?Principal }, Types.Error> {
+        #ok({ feeReceiverCid = feeReceiverCid; governanceCid = governanceCid });
     };
 
     public query func getStakingPool(poolCanisterId : Principal) : async Result.Result<Types.StakingPoolInfo, Text> {
@@ -285,8 +287,7 @@ shared (initMsg) actor class StakingPoolController(
             stakingTokenSymbol = params.stakingTokenSymbol;
             stakingTokenDecimals = params.stakingTokenDecimals;
             stakingTokenFee = params.stakingTokenFee;
-            rewardTokenFeeMultiplier = 1;
-            stakingTokenFeeMultiplier = 1;
+            rewardPerTime = params.rewardPerTime;
         };
         return stakingPoolInfo;
     };
@@ -308,6 +309,7 @@ shared (initMsg) actor class StakingPoolController(
             createTime = poolInfo.createTime;
             startTime = poolInfo.startTime;
             bonusEndTime = params.bonusEndTime;
+            rewardPerTime = params.rewardPerTime;
         };
         return stakingPoolInfo;
     };

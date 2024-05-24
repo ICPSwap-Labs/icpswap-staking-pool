@@ -11,7 +11,6 @@ import Float "mo:base/Float";
 import Int64 "mo:base/Int64";
 import Nat64 "mo:base/Nat64";
 import Timer "mo:base/Timer";
-import Debug "mo:base/Debug";
 import Buffer "mo:base/Buffer";
 import Option "mo:base/Option";
 import Result "mo:base/Result";
@@ -19,7 +18,6 @@ import HashMap "mo:base/HashMap";
 import Principal "mo:base/Principal";
 import Cycles "mo:base/ExperimentalCycles";
 
-import SafeUint "mo:commons/math/SafeUint";
 import CollectionUtils "mo:commons/utils/CollectionUtils";
 
 import TokenFactory "mo:token-adapter/TokenFactory";
@@ -32,8 +30,6 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
     private stable var _arithmeticFactor = 1_000_000_000_000_000_000_00;
     private stable var _totalRewardFee = 0;
     private stable var _receivedRewardFee = 0;
-    private stable var _rewardFee = params.rewardFee;
-    private stable var _feeReceiverCid = params.feeReceiverCid;
 
     private stable var _poolInfo : Types.StakingPoolState = {
         var rewardToken = params.rewardToken;
@@ -50,60 +46,68 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
         var startTime = params.startTime;
         var bonusEndTime = params.bonusEndTime;
 
+        var creator = params.creator;
+        var createTime = params.createTime;
+
         var lastRewardTime = 0;
         var accPerShare = 0;
         var totalDeposit = 0;
         var rewardDebt = 0;
     };
 
-    private stable var _ledgerAmount = {
-        var claim = 0.00;
+    private stable var _ledgerAmount : Types.LedgerAmountState = {
+        var harvest = 0.00;
         var staking = 0.00;
         var unStaking = 0.00;
-        var stakingBalance = 0.00;
-        var rewardBalance = 0.00;
     };
 
     private stable var _userInfoList : [(Principal, Types.UserInfo)] = [];
     private var _userInfoMap = HashMap.fromIter<Principal, Types.UserInfo>(_userInfoList.vals(), 10, Principal.equal, Principal.hash);
 
-    private stable var _lockList : [(Principal, Nat)] = [];
-    private var _lockMap = HashMap.fromIter<Principal, Nat>(_lockList.vals(), 0, Principal.equal, Principal.hash);
-
     private stable var _stakingRecords : [Types.Record] = [];
     private var _stakingRecordBuffer : Buffer.Buffer<Types.Record> = Buffer.Buffer<Types.Record>(0);
     private stable var _rewardRecords : [Types.Record] = [];
     private var _rewardRecordBuffer : Buffer.Buffer<Types.Record> = Buffer.Buffer<Types.Record>(0);
+    private stable var _preRewardRecords : [Types.Record] = [];
+    private var _preRewardRecordBuffer : Buffer.Buffer<Types.Record> = Buffer.Buffer<Types.Record>(0);
 
     system func preupgrade() {
         _userInfoList := Iter.toArray(_userInfoMap.entries());
-        _lockList := Iter.toArray(_lockMap.entries());
         _stakingRecords := Buffer.toArray(_stakingRecordBuffer);
         _rewardRecords := Buffer.toArray(_rewardRecordBuffer);
+        _preRewardRecords := Buffer.toArray(_preRewardRecordBuffer);
+        _errorLogList := Buffer.toArray(_errorLogBuffer);
+
     };
     system func postupgrade() {
         _userInfoList := [];
-        _lockList := [];
         for (record in _stakingRecords.vals()) {
             _stakingRecordBuffer.add(record);
         };
         for (record in _rewardRecords.vals()) {
             _rewardRecordBuffer.add(record);
         };
+        for (record in _preRewardRecords.vals()) {
+            _preRewardRecordBuffer.add(record);
+        };
+        for (record in _errorLogList.vals()) { _errorLogBuffer.add(record) };
         _stakingRecords := [];
         _rewardRecords := [];
+        _errorLogList := [];
+        _preRewardRecords := [];
     };
 
     public shared (msg) func stop() : async Result.Result<Types.PublicStakingPoolInfo, Text> {
         _checkAdminPermission(msg.caller);
+
         _poolInfo.bonusEndTime := _getTime();
         Timer.cancelTimer(_updateTokenInfoId);
-        Timer.cancelTimer(_unlockId);
         return _getPoolInfo();
     };
 
     public shared (msg) func updateStakingPool(params : Types.UpdateStakingPool) : async Result.Result<Bool, Text> {
         _checkAdminPermission(msg.caller);
+
         _poolInfo.rewardToken := params.rewardToken;
         _poolInfo.rewardTokenFee := params.rewardTokenFee;
         _poolInfo.rewardTokenSymbol := params.rewardTokenSymbol;
@@ -119,23 +123,9 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
         return #ok(true);
     };
 
-    public shared (msg) func clearLocks() : async Result.Result<Nat, Text> {
-        _checkAdminPermission(msg.caller);
-        var size = _lockMap.size();
-        _lockMap := HashMap.HashMap<Principal, Nat>(0, Principal.equal, Principal.hash);
-        return #ok(size);
-    };
-
-    public shared (msg) func setAutoUnlockTimes(n : Nat) : async Result.Result<Nat, Text> {
-        _checkAdminPermission(msg.caller);
-        if (n != 0) {
-            _autoUnlockTimes := n;
-        };
-        return #ok(_autoUnlockTimes);
-    };
-
     public shared (msg) func setTime(startTime : Nat, bonusEndTime : Nat) : async Result.Result<Types.PublicStakingPoolInfo, Text> {
         _checkAdminPermission(msg.caller);
+
         _poolInfo.startTime := startTime;
         _poolInfo.bonusEndTime := bonusEndTime;
         return _getPoolInfo();
@@ -143,13 +133,14 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
 
     public shared (msg) func withdrawRemainingRewardToken(amount : Nat, to : Principal) : async Result.Result<Nat, Text> {
         _checkAdminPermission(msg.caller);
+
         let currentTime = _getTime();
         if (_poolInfo.bonusEndTime > currentTime) {
-            return #err("Staking pool is not over");
+            return #err("Staking pool is not finish");
         };
         for ((userPrincipal, userInfo) in _userInfoMap.entries()) {
             if (userInfo.amount > 0) {
-                return #err("User Token have not been fully withdrawn");
+                return #err("User Token have not been fully unstake");
             };
         };
         var token : Types.Token = {
@@ -175,19 +166,16 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
             });
             return #ok(balance);
         } catch (e) {
-            return #err("InternalError" # (debug_show (Error.message(e))));
+            return #err("InternalError: " # (debug_show (Error.message(e))));
         };
     };
 
     public shared (msg) func refundSubaccountBalance(owner : Principal) : async Result.Result<Text, Text> {
         _checkAdminPermission(msg.caller);
+
         var subaccount : ?Blob = Option.make(Types.principalToBlob(owner));
         if (null == subaccount) {
             return #err("Subaccount can't be null");
-        };
-        var locked = _lock(owner);
-        if (not locked) {
-            return #err("The lock server is busy, and please try again later");
         };
 
         try {
@@ -198,66 +186,50 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                 subaccount = subaccount;
             });
             if (not (balance > 0)) {
-                _unLock(owner);
                 return #err("The balance of subaccount is 0");
             };
             var fee = _poolInfo.stakingTokenFee;
             if (not (balance > fee)) {
-                _unLock(owner);
                 return #err("The balance of subaccount is less than the staking token transfer fee");
             };
             var amount : Nat = Nat.sub(balance, fee);
             switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = subaccount }; from_subaccount = subaccount; to = { owner = owner; subaccount = null }; amount = amount; fee = null; memo = null; created_at_time = null })) {
                 case (#Ok(index)) {
-                    _unLock(owner);
                     return #ok("Refund Successfully");
                 };
                 case (#Err(message)) {
-                    _unLock(owner);
                     return #err("RefundError:" #debug_show (message));
                 };
             };
         } catch (e) {
-            _unLock(owner);
-            return #err("InternalError" # (debug_show (Error.message(e))));
+            return #err("InternalError: " # (debug_show (Error.message(e))));
         };
     };
 
     public shared (msg) func refundUserStaking(owner : Principal) : async Result.Result<Text, Text> {
         _checkAdminPermission(msg.caller);
+
         let currentTime = _getTime();
         if (_poolInfo.bonusEndTime > currentTime) {
-            return #err("Staking pool is not over");
-        };
-        var locked = _lock(owner);
-        if (not locked) {
-            return #err("The lock server is busy, and please try again later");
+            return #err("Staking pool is not finish");
         };
 
         try {
-            switch (await _harvest(owner)) {
-                case (#ok(status)) {};
-                case (#err(err)) {
-                    _unLock(owner);
-                    return #err(err);
-                };
-            };
+            _preHarvest(owner);
 
             var _userInfo : Types.UserInfo = _getUserInfo(owner);
-            var withdrawAmount = _userInfo.amount;
+            var refundAmount = _userInfo.amount;
 
-            if (withdrawAmount == 0) {
-                _unLock(owner);
-                return #err("The amount of withdrawal can’t be 0");
+            if (refundAmount == 0) {
+                return #err("The amount of refund can’t be 0");
             };
             var fee = _poolInfo.stakingTokenFee;
-            if (withdrawAmount < fee) {
-                _unLock(owner);
-                return #err("The amount of withdrawal is less than the staking token transfer fee");
+            if (refundAmount < fee) {
+                return #err("The amount of refund is less than the staking token transfer fee");
             };
-            switch (await _pay(_poolInfo.stakingToken, Principal.fromActor(this), null, owner, null, withdrawAmount - fee)) {
+            switch (await _pay(_poolInfo.stakingToken, Principal.fromActor(this), null, owner, null, refundAmount - fee)) {
                 case (#ok(amount)) {
-                    var amount = withdrawAmount;
+                    var amount = refundAmount;
                     _ledgerAmount.unStaking += Float.div(_natToFloat(amount), Float.pow(10, _natToFloat(_poolInfo.stakingTokenDecimals)));
                     _userInfo.amount := Nat.sub(_userInfo.amount, amount);
                     _poolInfo.totalDeposit := Nat.sub(_poolInfo.totalDeposit, amount);
@@ -267,7 +239,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                     );
                     _userInfoMap.put(owner, _userInfo);
                     let nowTime = _getTime();
-                    _save({
+                    _saveRecord({
                         to = owner;
                         from = Principal.fromActor(this);
                         rewardStandard = _poolInfo.rewardToken.standard;
@@ -280,19 +252,16 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                         stakingTokenDecimals = _poolInfo.stakingTokenDecimals;
                         amount = amount;
                         timestamp = nowTime;
-                        transType = #withdraw;
+                        transType = #unstake;
                     });
-                    _unLock(owner);
-                    return #ok("Withdrew Successfully");
+                    return #ok("Refund user staking Successfully");
                 };
                 case (#err(code)) {
-                    _unLock(owner);
-                    return #err("Withdraw::withdrawed error:" #debug_show (code));
+                    return #err("Refund user staking error:" #debug_show (code));
                 };
             };
         } catch (e) {
-            _unLock(owner);
-            return #err("InternalError" # (debug_show (Error.message(e))));
+            return #err("InternalError: " # (debug_show (Error.message(e))));
         };
     };
 
@@ -302,11 +271,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
     };
 
     public shared (msg) func withdrawRewardFee() : async Result.Result<Text, Text> {
-        assert (Principal.equal(msg.caller, _feeReceiverCid));
-        var locked = _lock(_feeReceiverCid);
-        if (not locked) {
-            return #err("The lock server is busy, and please try again later");
-        };
+        assert (Principal.equal(msg.caller, params.feeReceiverCid));
 
         try {
             var poolCanisterId = Principal.fromActor(this);
@@ -316,43 +281,36 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                 subaccount = null;
             });
             if (not (balance > 0)) {
-                _unLock(_feeReceiverCid);
                 return #err("The reward token balance of pool is 0");
             };
             var fee = _poolInfo.rewardTokenFee;
             if (not (balance > fee)) {
-                _unLock(_feeReceiverCid);
                 return #err("The reward token balance of pool is less than the reward token transfer fee");
             };
             let pending = Nat.sub(_totalRewardFee, _receivedRewardFee);
             if (not (balance > pending)) {
-                _unLock(_feeReceiverCid);
                 return #err("The reward token balance of pool is less than the reward fee");
             };
             if (not (pending > fee)) {
-                _unLock(_feeReceiverCid);
-                return #err("The unclaimd reward token tax fee of pool is less than the reward token transfer fee");
+                return #err("The unclaimd reward token fee of pool is less than the reward token transfer fee");
             };
 
             var amount : Nat = Nat.sub(pending, fee);
-            switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = null }; from_subaccount = null; to = { owner = _feeReceiverCid; subaccount = null }; amount = amount; fee = ?fee; memo = null; created_at_time = null })) {
+            switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = null }; from_subaccount = null; to = { owner = params.feeReceiverCid; subaccount = null }; amount = amount; fee = ?fee; memo = null; created_at_time = null })) {
                 case (#Ok(index)) {
-                    _unLock(_feeReceiverCid);
                     _receivedRewardFee += pending;
-                    return #ok("Claimed Successfully");
+                    return #ok("Withdraw reward fee successfully");
                 };
                 case (#Err(message)) {
-                    _unLock(_feeReceiverCid);
-                    return #err("Claim::Claimed error:" #debug_show (message));
+                    return #err("Withdraw reward fee error:" #debug_show (message));
                 };
             };
         } catch (e) {
-            _unLock(_feeReceiverCid);
-            return #err("InternalError" # (debug_show (Error.message(e))));
+            return #err("InternalError: " # (debug_show (Error.message(e))));
         };
     };
 
-    public shared (msg) func deposit() : async Result.Result<Text, Text> {
+    public shared (msg) func stake() : async Result.Result<Text, Text> {
         if (Principal.isAnonymous(msg.caller)) return #err("Illegal anonymous call");
         let currentTime = _getTime();
         if (_poolInfo.startTime > currentTime or _poolInfo.bonusEndTime < currentTime) {
@@ -365,10 +323,6 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
         if (null == subaccount) {
             return #err("Subaccount can't be null");
         };
-        var locked = _lock(msg.caller);
-        if (not locked) {
-            return #err("The lock server is busy, and please try again later");
-        };
 
         try {
             var poolCanisterId = Principal.fromActor(this);
@@ -378,23 +332,16 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                 subaccount = subaccount;
             });
             if (not (balance > 0)) {
-                _unLock(msg.caller);
-                return #err("The amount of deposit can’t be 0");
+                return #err("The amount of stake can’t be 0");
             };
             var fee = _poolInfo.stakingTokenFee;
             if (not (balance > fee)) {
-                _unLock(msg.caller);
-                return #err("The amount of deposit is less than the staking token transfer fee");
+                return #err("The amount of stake is less than the staking token transfer fee");
             };
             var amount : Nat = Nat.sub(balance, fee);
 
-            switch (await _harvest(msg.caller)) {
-                case (#ok(status)) {};
-                case (#err(err)) {
-                    _unLock(msg.caller);
-                    return #err(err);
-                };
-            };
+            _preHarvest(msg.caller);
+
             switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = subaccount }; from_subaccount = subaccount; to = { owner = poolCanisterId; subaccount = null }; amount = amount; fee = ?fee; memo = null; created_at_time = null })) {
                 case (#Ok(index)) {
                     _ledgerAmount.staking += Float.div(_natToFloat(amount), Float.pow(10, _natToFloat(_poolInfo.stakingTokenDecimals)));
@@ -407,7 +354,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                     );
                     _userInfoMap.put(msg.caller, _userInfo);
                     var nowTime = _getTime();
-                    _save({
+                    _saveRecord({
                         from = msg.caller;
                         to = Principal.fromActor(this);
                         rewardStandard = _poolInfo.rewardToken.standard;
@@ -420,23 +367,20 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                         stakingTokenDecimals = _poolInfo.stakingTokenDecimals;
                         amount = amount;
                         timestamp = nowTime;
-                        transType = #deposit;
+                        transType = #stake;
                     });
-                    _unLock(msg.caller);
-                    return #ok("Deposited Successfully");
+                    return #ok("Stake Successfully");
                 };
                 case (#Err(message)) {
-                    _unLock(msg.caller);
-                    return #err("Deposit::Deposited error:" #debug_show (message));
+                    return #err("Stake error:" #debug_show (message));
                 };
             };
         } catch (e) {
-            _unLock(msg.caller);
-            return #err("InternalError" # (debug_show (Error.message(e))));
+            return #err("InternalError: " # (debug_show (Error.message(e))));
         };
     };
 
-    public shared (msg) func depositFrom(amount : Nat) : async Result.Result<Text, Text> {
+    public shared (msg) func stakeFrom(amount : Nat) : async Result.Result<Text, Text> {
         if (Principal.isAnonymous(msg.caller)) return #err("Illegal anonymous call");
         let currentTime = _getTime();
         if (_poolInfo.startTime > currentTime or _poolInfo.bonusEndTime < currentTime) {
@@ -445,54 +389,41 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
         if (Text.notEqual(_poolInfo.stakingToken.standard, "ICP") and Text.notEqual(_poolInfo.stakingToken.standard, "ICRC1") and Text.notEqual(_poolInfo.stakingToken.standard, "ICRC2")) {
             return #err("Illegal token standard: " # debug_show (_poolInfo.stakingToken.standard));
         };
-        var locked = _lock(msg.caller);
-        if (not locked) {
-            return #err("The lock server is busy, and please try again later");
-        };
 
         try {
-
             let tokenAdapter = TokenFactory.getAdapter(_poolInfo.stakingToken.address, _poolInfo.stakingToken.standard);
             var balance : Nat = await tokenAdapter.balanceOf({
                 owner = msg.caller;
                 subaccount = null;
             });
             if (not (balance > 0)) {
-                _unLock(msg.caller);
                 return #err("The balance can’t be 0");
             };
             var fee = _poolInfo.stakingTokenFee;
             if (not (balance > fee)) {
-                _unLock(msg.caller);
                 return #err("The balance is less than the staking token transfer fee");
             };
             if (amount > balance) {
-                _unLock(msg.caller);
-                return #err("The deposit amount is higher than the account balance");
+                return #err("The stake amount is higher than the account balance");
             };
-            var deposit_amount : Nat = Nat.sub(amount, fee);
+            var stake_amount : Nat = Nat.sub(amount, fee);
 
-            switch (await _harvest(msg.caller)) {
-                case (#ok(status)) {};
-                case (#err(err)) {
-                    _unLock(msg.caller);
-                    return #err(err);
-                };
-            };
+            _preHarvest(msg.caller);
+
             var poolCanisterId = Principal.fromActor(this);
-            switch (await tokenAdapter.transferFrom({ from = { owner = msg.caller; subaccount = null }; to = { owner = poolCanisterId; subaccount = null }; amount = deposit_amount; fee = ?fee; memo = null; created_at_time = null })) {
+            switch (await tokenAdapter.transferFrom({ from = { owner = msg.caller; subaccount = null }; to = { owner = poolCanisterId; subaccount = null }; amount = stake_amount; fee = ?fee; memo = null; created_at_time = null })) {
                 case (#Ok(index)) {
-                    _ledgerAmount.staking += Float.div(_natToFloat(deposit_amount), Float.pow(10, _natToFloat(_poolInfo.stakingTokenDecimals)));
+                    _ledgerAmount.staking += Float.div(_natToFloat(stake_amount), Float.pow(10, _natToFloat(_poolInfo.stakingTokenDecimals)));
                     var _userInfo : Types.UserInfo = _getUserInfo(msg.caller);
-                    _userInfo.amount := Nat.add(_userInfo.amount, deposit_amount);
-                    _poolInfo.totalDeposit := Nat.add(_poolInfo.totalDeposit, deposit_amount);
+                    _userInfo.amount := Nat.add(_userInfo.amount, stake_amount);
+                    _poolInfo.totalDeposit := Nat.add(_poolInfo.totalDeposit, stake_amount);
                     _userInfo.rewardDebt := Nat.div(
                         Nat.mul(_userInfo.amount, _poolInfo.accPerShare),
                         _arithmeticFactor,
                     );
                     _userInfoMap.put(msg.caller, _userInfo);
                     var nowTime = _getTime();
-                    _save({
+                    _saveRecord({
                         from = msg.caller;
                         to = Principal.fromActor(this);
                         rewardStandard = _poolInfo.rewardToken.standard;
@@ -503,72 +434,41 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                         stakingToken = _poolInfo.stakingToken.address;
                         stakingTokenSymbol = _poolInfo.stakingTokenSymbol;
                         stakingTokenDecimals = _poolInfo.stakingTokenDecimals;
-                        amount = deposit_amount;
+                        amount = stake_amount;
                         timestamp = nowTime;
-                        transType = #depositFrom;
+                        transType = #stake;
                     });
-                    _unLock(msg.caller);
-                    return #ok("Deposited Successfully");
+                    return #ok("Stake Successfully");
                 };
                 case (#Err(message)) {
-                    _unLock(msg.caller);
-                    return #err("Deposit::Deposited error:" #debug_show (message));
+                    return #err("Stake error:" #debug_show (message));
                 };
             };
         } catch (e) {
-            _unLock(msg.caller);
-            return #err("InternalError" # (debug_show (Error.message(e))));
+            return #err("InternalError: " # (debug_show (Error.message(e))));
         };
     };
 
-    public shared (msg) func harvest() : async Result.Result<Nat, Text> {
-        var locked = _lock(msg.caller);
-        if (not locked) {
-            return #err("The lock server is busy, and please try again later");
-        };
+    public shared (msg) func unstake(amount : Nat) : async Result.Result<Text, Text> {
         try {
-            let result = await _harvest(msg.caller);
-            _unLock(msg.caller);
-            return result;
-        } catch (e) {
-            _unLock(msg.caller);
-            return #err("Harvest Exception: " #debug_show (Error.message(e)));
-        };
-    };
-
-    public shared (msg) func withdraw(amount : Nat) : async Result.Result<Text, Text> {
-        var locked = _lock(msg.caller);
-        if (not locked) {
-            return #err("The lock server is busy, and please try again later");
-        };
-
-        try {
-            switch (await _harvest(msg.caller)) {
-                case (#ok(status)) {};
-                case (#err(err)) {
-                    _unLock(msg.caller);
-                    return #err(err);
-                };
-            };
+            _preHarvest(msg.caller);
 
             var _userInfo : Types.UserInfo = _getUserInfo(msg.caller);
-            var withdrawAmount = if (amount > _userInfo.amount) {
+            var unstakeAmount = if (amount > _userInfo.amount) {
                 _userInfo.amount;
             } else {
                 amount;
             };
-            if (withdrawAmount == 0) {
-                _unLock(msg.caller);
-                return #err("The amount of withdrawal can’t be 0");
+            if (unstakeAmount == 0) {
+                return #err("The amount of unstake can’t be 0");
             };
             var fee = _poolInfo.stakingTokenFee;
-            if (withdrawAmount < fee) {
-                _unLock(msg.caller);
-                return #err("The amount of withdrawal is less than the staking token transfer fee");
+            if (unstakeAmount < fee) {
+                return #err("The amount of unstake is less than the staking token transfer fee");
             };
-            switch (await _pay(_poolInfo.stakingToken, Principal.fromActor(this), null, msg.caller, null, withdrawAmount - fee)) {
+            switch (await _pay(_poolInfo.stakingToken, Principal.fromActor(this), null, msg.caller, null, unstakeAmount - fee)) {
                 case (#ok(amount)) {
-                    var amount = withdrawAmount;
+                    var amount = unstakeAmount;
                     _ledgerAmount.unStaking += Float.div(_natToFloat(amount), Float.pow(10, _natToFloat(_poolInfo.stakingTokenDecimals)));
                     _userInfo.amount := Nat.sub(_userInfo.amount, amount);
                     _poolInfo.totalDeposit := Nat.sub(_poolInfo.totalDeposit, amount);
@@ -578,7 +478,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                     );
                     _userInfoMap.put(msg.caller, _userInfo);
                     let nowTime = _getTime();
-                    _save({
+                    _saveRecord({
                         to = msg.caller;
                         from = Principal.fromActor(this);
                         rewardStandard = _poolInfo.rewardToken.standard;
@@ -591,20 +491,46 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                         stakingTokenDecimals = _poolInfo.stakingTokenDecimals;
                         amount = amount;
                         timestamp = nowTime;
-                        transType = #withdraw;
+                        transType = #unstake;
                     });
-                    _unLock(msg.caller);
-                    return #ok("Withdrew Successfully");
+                    return #ok("Unstake Successfully");
                 };
                 case (#err(code)) {
-                    _unLock(msg.caller);
-                    return #err("Withdraw::withdrawed error:" #debug_show (code));
+                    return #err("Unstake error:" #debug_show (code));
                 };
             };
         } catch (e) {
-            _unLock(msg.caller);
-            return #err("InternalError" # (debug_show (Error.message(e))));
+            return #err("InternalError: " # (debug_show (Error.message(e))));
         };
+    };
+
+    public shared (msg) func harvest() : async Result.Result<Bool, Text> {
+        try {
+            _preHarvest(msg.caller);
+            return #ok(true);
+        } catch (e) {
+            return #err("Harvest error: " #debug_show (Error.message(e)));
+        };
+    };
+
+    public shared func claimReward(owner : Principal) : async Result.Result<Bool, Text> {
+        var buffer = Buffer.Buffer<Types.Record>(_preRewardRecordBuffer.size());
+        for (_preReward in _preRewardRecordBuffer.vals()) {
+            if (Principal.equal(_preReward.to, owner)) {
+                switch (await _pay(_poolInfo.rewardToken, Principal.fromActor(this), null, _preReward.to, null, _preReward.amount - _poolInfo.rewardTokenFee)) {
+                    case (#ok(amount)) {
+                        _saveRecord(_preReward);
+                    };
+                    case (#err(code)) {
+                        _errorLogBuffer.add("Claim reward failed at " # debug_show (_getTime()) # ". Code: " # debug_show (code) # ". Reward info: " # debug_show (_preReward));
+                    };
+                };
+            } else {
+                buffer.add(_preReward);
+            };
+        };
+        _preRewardRecordBuffer := buffer;
+        return #ok(true);
     };
 
     public shared (msg) func claim() : async Result.Result<Text, Text> {
@@ -616,10 +542,6 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
         if (null == subaccount) {
             return #err("Subaccount can't be null");
         };
-        var locked = _lock(msg.caller);
-        if (not locked) {
-            return #err("The lock server is busy, and please try again later");
-        };
 
         try {
             var poolCanisterId = Principal.fromActor(this);
@@ -629,28 +551,23 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                 subaccount = subaccount;
             });
             if (not (balance > 0)) {
-                _unLock(msg.caller);
                 return #err("The amount of claim is 0");
             };
             var fee = _poolInfo.stakingTokenFee;
             if (not (balance > fee)) {
-                _unLock(msg.caller);
                 return #err("The amount of claim is less than the staking token transfer fee");
             };
             var amount : Nat = Nat.sub(balance, fee);
             switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = subaccount }; from_subaccount = subaccount; to = { owner = msg.caller; subaccount = null }; amount = amount; fee = ?fee; memo = null; created_at_time = null })) {
                 case (#Ok(index)) {
-                    _unLock(msg.caller);
-                    return #ok("Claimed Successfully");
+                    return #ok("Claim Successfully");
                 };
                 case (#Err(message)) {
-                    _unLock(msg.caller);
-                    return #err("Claim::Claimed error:" #debug_show (message));
+                    return #err("Claim error:" #debug_show (message));
                 };
             };
         } catch (e) {
-            _unLock(msg.caller);
-            return #err("InternalError" # (debug_show (Error.message(e))));
+            return #err("InternalError: " # (debug_show (Error.message(e))));
         };
     };
 
@@ -658,6 +575,14 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
         return #ok({
             balance = Cycles.balance();
             available = Cycles.available();
+        });
+    };
+
+    public shared func getLedgerInfo() : async Result.Result<Types.LedgerAmountInfo, Types.Error> {
+        return #ok({
+            harvest = _ledgerAmount.harvest;
+            staking = _ledgerAmount.staking;
+            unStaking = _ledgerAmount.unStaking;
         });
     };
 
@@ -691,10 +616,6 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
             rewardDebt = __user.rewardDebt;
             pendingReward = pendingReward;
         });
-    };
-
-    public query func getAllLocks() : async Result.Result<[(Principal, Nat)], Text> {
-        return #ok(Iter.toArray(_lockMap.entries()));
     };
 
     public query func getPoolInfo() : async Result.Result<Types.PublicStakingPoolInfo, Text> {
@@ -807,38 +728,15 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
             bonusEndTime = _poolInfo.bonusEndTime;
             lastRewardTime = _poolInfo.lastRewardTime;
             rewardPerTime = _poolInfo.rewardPerTime;
-            rewardFee = _rewardFee;
+            rewardFee = params.rewardFee;
             accPerShare = _poolInfo.accPerShare;
 
             totalDeposit = _poolInfo.totalDeposit;
             rewardDebt = _poolInfo.rewardDebt;
+
+            creator = _poolInfo.creator;
+            createTime = _poolInfo.createTime;
         });
-    };
-
-    private func _unlock() : async () {
-        let nowTimes = _getTime();
-        for ((userPrincipal, lockTime) in _lockMap.entries()) {
-            if ((SafeUint.Uint256(nowTimes).sub(SafeUint.Uint256(lockTime)).val()) > _autoUnlockTimes) {
-                _unLock(userPrincipal);
-            };
-        };
-    };
-
-    private func _lock(caller : Principal) : Bool {
-        switch (_lockMap.get(caller)) {
-            case (null) {
-                var nowTime = _getTime();
-                _lockMap.put(caller, nowTime);
-                return true;
-            };
-            case (?lockUser) {
-                return false;
-            };
-        };
-    };
-
-    private func _unLock(caller : Principal) : () {
-        _lockMap.delete(caller);
     };
 
     private func _getTime() : Nat {
@@ -914,19 +812,6 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
         };
     };
 
-    private func _updatePool() : async () {
-        var nowTime = _getTime();
-        if (nowTime <= _poolInfo.lastRewardTime) { return };
-        if (_poolInfo.totalDeposit == 0) {
-            _poolInfo.lastRewardTime := nowTime;
-            return;
-        };
-        var rewardInterval : Nat = _getRewardInterval(_poolInfo.lastRewardTime, nowTime);
-        var reward : Nat = Nat.mul(rewardInterval, _poolInfo.rewardPerTime);
-        _poolInfo.accPerShare := Nat.add(_poolInfo.accPerShare, Nat.div(Nat.mul(reward, _arithmeticFactor), _poolInfo.totalDeposit));
-        _poolInfo.lastRewardTime := nowTime;
-    };
-
     private func _pendingReward(user : Principal) : Nat {
         var nowTime = _getTime();
         var _userInfo : Types.UserInfo = _getUserInfo(user);
@@ -936,7 +821,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
             _poolInfo.accPerShare := Nat.add(_poolInfo.accPerShare, Nat.div(Nat.mul(reward, _arithmeticFactor), _poolInfo.totalDeposit));
         };
         var rewardAmount = Nat.sub(Nat.div(Nat.mul(_userInfo.amount, _poolInfo.accPerShare), _arithmeticFactor), _userInfo.rewardDebt);
-        let rewardTokenTaxFee : Nat = Nat.div(Nat.mul(rewardAmount, _rewardFee), 100);
+        let rewardTokenTaxFee : Nat = Nat.div(Nat.mul(rewardAmount, params.rewardFee), 100);
         if (rewardTokenTaxFee > 0) {
             rewardAmount := rewardAmount - rewardTokenTaxFee;
         };
@@ -947,15 +832,23 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
         Float.fromInt(amount);
     };
 
-    private func _harvest(caller : Principal) : async Result.Result<Nat, Text> {
-        await _updatePool();
+    private func _preHarvest(caller : Principal) : () {
+        var nowTime = _getTime();
+        var accPerShare = _poolInfo.accPerShare;
+        var lastRewardTime = nowTime;
+        if (_poolInfo.totalDeposit > 0) {
+            var rewardInterval : Nat = _getRewardInterval(_poolInfo.lastRewardTime, nowTime);
+            var reward : Nat = Nat.mul(rewardInterval, _poolInfo.rewardPerTime);
+            accPerShare := Nat.add(_poolInfo.accPerShare, Nat.div(Nat.mul(reward, _arithmeticFactor), _poolInfo.totalDeposit));
+        };
+
         var _userInfo : Types.UserInfo = _getUserInfo(caller);
-        var pending : Nat = Nat.sub(Nat.div(Nat.mul(_userInfo.amount, _poolInfo.accPerShare), _arithmeticFactor), _userInfo.rewardDebt);
+        var pending : Nat = Nat.sub(Nat.div(Nat.mul(_userInfo.amount, accPerShare), _arithmeticFactor), _userInfo.rewardDebt);
         if (pending == 0 or pending < _poolInfo.rewardTokenFee) {
-            return #ok(0);
+            return;
         };
         var rewardAmount = pending;
-        let rewardFee : Nat = Nat.div(Nat.mul(rewardAmount, _rewardFee), 100);
+        let rewardFee : Nat = Nat.div(Nat.mul(rewardAmount, params.rewardFee), 100);
         if (rewardFee > 0) {
             _totalRewardFee += rewardFee;
             rewardAmount := rewardAmount - rewardFee;
@@ -963,48 +856,64 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
 
         if (rewardAmount < _poolInfo.rewardTokenFee) {
             _totalRewardFee -= rewardFee;
-            return #ok(0);
+            return;
         };
-        switch (await _pay(_poolInfo.rewardToken, Principal.fromActor(this), null, caller, null, rewardAmount - _poolInfo.rewardTokenFee)) {
-            case (#ok(amount)) {
-                _ledgerAmount.claim += Float.div(_natToFloat(amount), Float.pow(10, _natToFloat(_poolInfo.rewardTokenDecimals)));
-                _poolInfo.rewardDebt := _poolInfo.rewardDebt + pending;
-                _userInfo.rewardDebt := Nat.div(Nat.mul(_userInfo.amount, _poolInfo.accPerShare), _arithmeticFactor);
-                _userInfoMap.put(caller, _userInfo);
-                var nowTime = _getTime();
-                _save({
-                    from = Principal.fromActor(this);
-                    to = caller;
-                    rewardStandard = _poolInfo.rewardToken.standard;
-                    rewardToken = _poolInfo.rewardToken.address;
-                    rewardTokenSymbol = _poolInfo.rewardTokenSymbol;
-                    rewardTokenDecimals = _poolInfo.rewardTokenDecimals;
-                    stakingStandard = _poolInfo.stakingToken.standard;
-                    stakingToken = _poolInfo.stakingToken.address;
-                    stakingTokenDecimals = _poolInfo.stakingTokenDecimals;
-                    stakingTokenSymbol = _poolInfo.stakingTokenSymbol;
-                    amount = rewardAmount;
-                    timestamp = nowTime;
-                    transType = #claim;
-                });
-                return #ok(amount);
-            };
-            case (#err(code)) {
-                Debug.print("_harvest error = " #debug_show (code));
-                return #err("Harvest error:" #debug_show (code));
-            };
+
+        _ledgerAmount.harvest += Float.div(_natToFloat(Nat.sub(rewardAmount, _poolInfo.rewardTokenFee)), Float.pow(10, _natToFloat(_poolInfo.rewardTokenDecimals)));
+        _poolInfo.rewardDebt := _poolInfo.rewardDebt + pending;
+        _poolInfo.accPerShare := accPerShare;
+        _poolInfo.lastRewardTime := lastRewardTime;
+        _userInfo.rewardDebt := Nat.div(Nat.mul(_userInfo.amount, accPerShare), _arithmeticFactor);
+        _userInfoMap.put(caller, _userInfo);
+        var _harvestRecord = {
+            from = Principal.fromActor(this);
+            to = caller;
+            rewardStandard = _poolInfo.rewardToken.standard;
+            rewardToken = _poolInfo.rewardToken.address;
+            rewardTokenSymbol = _poolInfo.rewardTokenSymbol;
+            rewardTokenDecimals = _poolInfo.rewardTokenDecimals;
+            stakingStandard = _poolInfo.stakingToken.standard;
+            stakingToken = _poolInfo.stakingToken.address;
+            stakingTokenDecimals = _poolInfo.stakingTokenDecimals;
+            stakingTokenSymbol = _poolInfo.stakingTokenSymbol;
+            amount = rewardAmount;
+            timestamp = nowTime;
+            transType = #harvest;
         };
+        _savePreRecord(_harvestRecord);
     };
 
-    private func _save(trans : Types.Record) : () {
+    private func _saveRecord(trans : Types.Record) : () {
         switch (trans.transType) {
-            case (#claim) {
+            case (#harvest) {
                 _rewardRecordBuffer.add(trans);
             };
             case (_) {
                 _stakingRecordBuffer.add(trans);
             };
         };
+    };
+
+    private func _savePreRecord(trans : Types.Record) : () {
+        switch (trans.transType) {
+            case (#harvest) {
+                _rewardRecordBuffer.add(trans);
+            };
+            case (_) {
+                _stakingRecordBuffer.add(trans);
+            };
+        };
+    };
+
+    // --------------------------- ERROR LOG ------------------------------------
+    private stable var _errorLogList : [Text] = [];
+    private var _errorLogBuffer : Buffer.Buffer<Text> = Buffer.Buffer<Text>(0);
+    public shared (msg) func clearErrorLog() : async () {
+        _checkAdminPermission(msg.caller);
+        _errorLogBuffer := Buffer.Buffer<Text>(0);
+    };
+    public query func getErrorLog() : async [Text] {
+        return Buffer.toArray(_errorLogBuffer);
     };
 
     private stable var _admins : [Principal] = [initMsg.caller];
@@ -1032,7 +941,6 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
     };
 
     let _updateTokenInfoId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(600), _updateTokenInfo);
-    let _unlockId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(60), _unlock);
 
     private var _version : Text = "1.0.0";
     public query func getVersion() : async Text { _version };

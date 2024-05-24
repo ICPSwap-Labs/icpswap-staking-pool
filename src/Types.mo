@@ -55,16 +55,21 @@ module {
     };
 
     public type TransType = {
-        #deposit;
-        #depositFrom;
-        #withdraw;
-        #claim;
-        #createIncentive;
-        #endIncentive;
-        #stakeTokenids;
-        #unstakeTokenids;
-        #staking;
-        #unstaking;
+        #harvest;
+        #stake;
+        #unstake;
+    };
+
+    public type LedgerAmountState = {
+        var harvest : Float;
+        var staking : Float;
+        var unStaking : Float;
+    };
+
+    public type LedgerAmountInfo = {
+        harvest : Float;
+        staking : Float;
+        unStaking : Float;
     };
 
     public type GlobalDataState = {
@@ -137,6 +142,9 @@ module {
         var rewardPerTime : Nat;
         var accPerShare : Nat;
 
+        var creator : Principal;
+        var createTime : Nat;
+
         var totalDeposit : Nat;
         var rewardDebt : Nat;
     };
@@ -157,6 +165,8 @@ module {
         accPerShare : Nat;
         totalDeposit : Nat;
         rewardDebt : Nat;
+        creator : Principal;
+        createTime : Nat;
     };
     public type StakingPoolInfo = {
         canisterId : Principal;
@@ -172,6 +182,7 @@ module {
         rewardTokenSymbol : Text;
         rewardTokenDecimals : Nat;
         rewardTokenFee : Nat;
+        rewardPerTime : Nat;
         creator : Principal;
     };
 
@@ -206,6 +217,8 @@ module {
 
         rewardFee : Nat;
         feeReceiverCid : Principal;
+        creator : Principal;
+        createTime : Nat;
     };
 
     public type UpdateStakingPool = {
@@ -246,16 +259,15 @@ module {
 
     public type IStakingPool = actor {
         updateStakingPool : shared UpdateStakingPool -> async Result.Result<Bool, Text>;
-        clearLocks : shared () -> async Result.Result<Nat, Text>;
-        setAutoUnlockTimes : shared Nat -> async Result.Result<Nat, Text>;
         stop : shared () -> async Result.Result<PublicStakingPoolInfo, Text>;
         setTime : shared (startTime : Nat, bonusEndTime : Nat) -> async Result.Result<PublicStakingPoolInfo, Text>;
         unclaimdRewardFee : query () -> async Result.Result<Nat, Text>;
-        withdrawRewardFee : shared () -> async Result.Result<Text,Text>;
+        withdrawRewardFee : shared () -> async Result.Result<Text, Text>;
 
-        deposit : shared () -> async Result.Result<Text, Text>;
-        harvest : shared () -> async Result.Result<Nat, Text>;
-        withdraw : shared Nat -> async Result.Result<Text, Text>;
+        stake : shared () -> async Result.Result<Text, Text>;
+        stakeFrom : shared Nat -> async Result.Result<Text, Text>;
+        harvest : shared () -> async Result.Result<Bool, Text>;
+        unstake : shared Nat -> async Result.Result<Text, Text>;
         claim : shared () -> async Result.Result<Text, Text>;
 
         getUserInfo : query Principal -> async Result.Result<PublicUserInfo, Text>;
