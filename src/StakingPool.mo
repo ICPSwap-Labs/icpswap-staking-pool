@@ -344,6 +344,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
 
             switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = subaccount }; from_subaccount = subaccount; to = { owner = poolCanisterId; subaccount = null }; amount = amount; fee = ?fee; memo = null; created_at_time = null })) {
                 case (#Ok(index)) {
+                    var nowTime = _getTime();
                     _ledgerAmount.staking += Float.div(_natToFloat(amount), Float.pow(10, _natToFloat(_poolInfo.stakingTokenDecimals)));
                     var _userInfo : Types.UserInfo = _getUserInfo(msg.caller);
                     _userInfo.amount := Nat.add(_userInfo.amount, amount);
@@ -352,8 +353,8 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                         Nat.mul(_userInfo.amount, _poolInfo.accPerShare),
                         _arithmeticFactor,
                     );
+                    _userInfo.lastStakeTime := nowTime;
                     _userInfoMap.put(msg.caller, _userInfo);
-                    var nowTime = _getTime();
                     _saveRecord({
                         from = msg.caller;
                         to = Principal.fromActor(this);
@@ -413,6 +414,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
             var poolCanisterId = Principal.fromActor(this);
             switch (await tokenAdapter.transferFrom({ from = { owner = msg.caller; subaccount = null }; to = { owner = poolCanisterId; subaccount = null }; amount = stake_amount; fee = ?fee; memo = null; created_at_time = null })) {
                 case (#Ok(index)) {
+                    var nowTime = _getTime();
                     _ledgerAmount.staking += Float.div(_natToFloat(stake_amount), Float.pow(10, _natToFloat(_poolInfo.stakingTokenDecimals)));
                     var _userInfo : Types.UserInfo = _getUserInfo(msg.caller);
                     _userInfo.amount := Nat.add(_userInfo.amount, stake_amount);
@@ -421,8 +423,8 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                         Nat.mul(_userInfo.amount, _poolInfo.accPerShare),
                         _arithmeticFactor,
                     );
+                    _userInfo.lastStakeTime := nowTime;
                     _userInfoMap.put(msg.caller, _userInfo);
-                    var nowTime = _getTime();
                     _saveRecord({
                         from = msg.caller;
                         to = Principal.fromActor(this);
@@ -595,6 +597,8 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                     amount = userInfo.amount;
                     rewardDebt = userInfo.rewardDebt;
                     pendingReward = _pendingReward(userPrincipal);
+                    lastRewardTime = userInfo.lastRewardTime;
+                    lastStakeTime = userInfo.lastStakeTime;
                 },
             ));
         };
@@ -609,12 +613,14 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
     };
 
     public query func getUserInfo(user : Principal) : async Result.Result<Types.PublicUserInfo, Text> {
-        let __user = _getUserInfo(user);
-        let pendingReward = _pendingReward(user);
+        let _user = _getUserInfo(user);
+        let _pendingRewardAmount = _pendingReward(user);
         return #ok({
-            amount = __user.amount;
-            rewardDebt = __user.rewardDebt;
-            pendingReward = pendingReward;
+            amount = _user.amount;
+            rewardDebt = _user.rewardDebt;
+            pendingReward = _pendingRewardAmount;
+            lastRewardTime = _user.lastRewardTime;
+            lastStakeTime = _user.lastStakeTime;
         });
     };
 
@@ -770,6 +776,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                 {
                     var amount = 0;
                     var rewardDebt = 0;
+                    var lastStakeTime = 0;
                     var lastRewardTime = 0;
                 };
             };
@@ -801,11 +808,17 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
     };
 
     private func _getRewardInterval(lastRewardTime : Nat, nowTime : Nat) : Nat {
-        if (lastRewardTime < _poolInfo.bonusEndTime) {
+        var _lastRewardTime = lastRewardTime;
+
+        if (_lastRewardTime == 0) {
+            _lastRewardTime := _poolInfo.startTime;
+        };
+
+        if (_lastRewardTime < _poolInfo.bonusEndTime) {
             if (nowTime <= _poolInfo.bonusEndTime) {
-                return Nat.sub(nowTime, lastRewardTime);
+                return Nat.sub(nowTime, _lastRewardTime);
             } else {
-                return Nat.sub(_poolInfo.bonusEndTime, lastRewardTime);
+                return Nat.sub(_poolInfo.bonusEndTime, _lastRewardTime);
             };
         } else {
             return 0;
@@ -821,9 +834,9 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
             _poolInfo.accPerShare := Nat.add(_poolInfo.accPerShare, Nat.div(Nat.mul(reward, _arithmeticFactor), _poolInfo.totalDeposit));
         };
         var rewardAmount = Nat.sub(Nat.div(Nat.mul(_userInfo.amount, _poolInfo.accPerShare), _arithmeticFactor), _userInfo.rewardDebt);
-        let rewardTokenTaxFee : Nat = Nat.div(Nat.mul(rewardAmount, params.rewardFee), 100);
-        if (rewardTokenTaxFee > 0) {
-            rewardAmount := rewardAmount - rewardTokenTaxFee;
+        let rewardTokenFee : Nat = Nat.div(Nat.mul(rewardAmount, params.rewardFee), 100);
+        if (rewardTokenFee > 0) {
+            rewardAmount := rewardAmount - rewardTokenFee;
         };
         return rewardAmount;
     };
@@ -864,6 +877,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
         _poolInfo.accPerShare := accPerShare;
         _poolInfo.lastRewardTime := lastRewardTime;
         _userInfo.rewardDebt := Nat.div(Nat.mul(_userInfo.amount, accPerShare), _arithmeticFactor);
+        _userInfo.lastRewardTime := lastRewardTime;
         _userInfoMap.put(caller, _userInfo);
         var _harvestRecord = {
             from = Principal.fromActor(this);
@@ -895,14 +909,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
     };
 
     private func _savePreRecord(trans : Types.Record) : () {
-        switch (trans.transType) {
-            case (#harvest) {
-                _rewardRecordBuffer.add(trans);
-            };
-            case (_) {
-                _stakingRecordBuffer.add(trans);
-            };
-        };
+        _preRewardRecordBuffer.add(trans);
     };
 
     // --------------------------- ERROR LOG ------------------------------------

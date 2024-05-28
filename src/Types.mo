@@ -120,11 +120,15 @@ module {
     public type UserInfo = {
         var amount : Nat;
         var rewardDebt : Nat;
+        var lastStakeTime : Nat;
+        var lastRewardTime : Nat;
     };
     public type PublicUserInfo = {
         amount : Nat;
         rewardDebt : Nat;
         pendingReward : Nat;
+        lastStakeTime : Nat;
+        lastRewardTime : Nat;
     };
     public type StakingPoolState = {
         var rewardToken : Token;
