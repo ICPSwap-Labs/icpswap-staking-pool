@@ -24,36 +24,30 @@ import TokenFactory "mo:token-adapter/TokenFactory";
 
 import Types "Types";
 
-shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Types.IStakingPool = this {
+shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async Types.IStakingPool = this {
 
-    private stable var _autoUnlockTimes = 200;
     private stable var _arithmeticFactor = 1_000_000_000_000_000_000_00;
+
+    private stable var _rewardToken = initArgs.rewardToken;
+    private stable var _rewardTokenFee = initArgs.rewardTokenFee;
+    private stable var _rewardTokenSymbol = initArgs.rewardTokenSymbol;
+    private stable var _rewardTokenDecimals = initArgs.rewardTokenDecimals;
+    private stable var _stakingToken = initArgs.stakingToken;
+    private stable var _stakingTokenFee = initArgs.stakingTokenFee;
+    private stable var _stakingTokenSymbol = initArgs.stakingTokenSymbol;
+    private stable var _stakingTokenDecimals = initArgs.stakingTokenDecimals;
+    private stable var _rewardPerTime = initArgs.rewardPerTime;
+    private stable var _startTime = initArgs.startTime;
+    private stable var _bonusEndTime = initArgs.bonusEndTime;
+    private stable var _creator = initArgs.creator;
+    private stable var _createTime = initArgs.createTime;
+    private stable var _lastRewardTime = 0;
+    private stable var _accPerShare = 0;
+    private stable var _totalDeposit = 0;
+    private stable var _rewardDebt = 0;
+
     private stable var _totalRewardFee = 0;
     private stable var _receivedRewardFee = 0;
-
-    private stable var _poolInfo : Types.StakingPoolState = {
-        var rewardToken = params.rewardToken;
-        var rewardTokenFee = params.rewardTokenFee;
-        var rewardTokenSymbol = params.rewardTokenSymbol;
-        var rewardTokenDecimals = params.rewardTokenDecimals;
-        var stakingToken = params.stakingToken;
-        var stakingTokenFee = params.stakingTokenFee;
-        var stakingTokenSymbol = params.stakingTokenSymbol;
-        var stakingTokenDecimals = params.stakingTokenDecimals;
-
-        var rewardPerTime = params.rewardPerTime;
-
-        var startTime = params.startTime;
-        var bonusEndTime = params.bonusEndTime;
-
-        var creator = params.creator;
-        var createTime = params.createTime;
-
-        var lastRewardTime = 0;
-        var accPerShare = 0;
-        var totalDeposit = 0;
-        var rewardDebt = 0;
-    };
 
     private stable var _ledgerAmount : Types.LedgerAmountState = {
         var harvest = 0.00;
@@ -100,7 +94,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
     public shared (msg) func stop() : async Result.Result<Types.PublicStakingPoolInfo, Text> {
         _checkAdminPermission(msg.caller);
 
-        _poolInfo.bonusEndTime := _getTime();
+        _bonusEndTime := _getTime();
         Timer.cancelTimer(_updateTokenInfoId);
         return _getPoolInfo();
     };
@@ -108,26 +102,26 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
     public shared (msg) func updateStakingPool(params : Types.UpdateStakingPool) : async Result.Result<Bool, Text> {
         _checkAdminPermission(msg.caller);
 
-        _poolInfo.rewardToken := params.rewardToken;
-        _poolInfo.rewardTokenFee := params.rewardTokenFee;
-        _poolInfo.rewardTokenSymbol := params.rewardTokenSymbol;
-        _poolInfo.rewardTokenDecimals := params.rewardTokenDecimals;
-        _poolInfo.stakingToken := params.stakingToken;
-        _poolInfo.stakingTokenFee := params.stakingTokenFee;
-        _poolInfo.stakingTokenSymbol := params.stakingTokenSymbol;
-        _poolInfo.stakingTokenDecimals := params.stakingTokenDecimals;
+        _rewardToken := params.rewardToken;
+        _rewardTokenFee := params.rewardTokenFee;
+        _rewardTokenSymbol := params.rewardTokenSymbol;
+        _rewardTokenDecimals := params.rewardTokenDecimals;
+        _stakingToken := params.stakingToken;
+        _stakingTokenFee := params.stakingTokenFee;
+        _stakingTokenSymbol := params.stakingTokenSymbol;
+        _stakingTokenDecimals := params.stakingTokenDecimals;
 
-        _poolInfo.startTime := params.startTime;
-        _poolInfo.bonusEndTime := params.bonusEndTime;
-        _poolInfo.rewardPerTime := params.rewardPerTime;
+        _startTime := params.startTime;
+        _bonusEndTime := params.bonusEndTime;
+        _rewardPerTime := params.rewardPerTime;
         return #ok(true);
     };
 
     public shared (msg) func setTime(startTime : Nat, bonusEndTime : Nat) : async Result.Result<Types.PublicStakingPoolInfo, Text> {
         _checkAdminPermission(msg.caller);
 
-        _poolInfo.startTime := startTime;
-        _poolInfo.bonusEndTime := bonusEndTime;
+        _startTime := startTime;
+        _bonusEndTime := bonusEndTime;
         return _getPoolInfo();
     };
 
@@ -135,7 +129,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
         _checkAdminPermission(msg.caller);
 
         let currentTime = _getTime();
-        if (_poolInfo.bonusEndTime > currentTime) {
+        if (_bonusEndTime > currentTime) {
             return #err("Staking pool is not finish");
         };
         for ((userPrincipal, userInfo) in _userInfoMap.entries()) {
@@ -144,10 +138,10 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
             };
         };
         var token : Types.Token = {
-            address = _poolInfo.rewardToken.address;
-            standard = _poolInfo.rewardToken.standard;
+            address = _rewardToken.address;
+            standard = _rewardToken.standard;
         };
-        let withdrawAmount = Nat.sub(amount, _poolInfo.rewardTokenFee);
+        let withdrawAmount = Nat.sub(amount, _rewardTokenFee);
         return await _pay(token, Principal.fromActor(this), null, to, null, withdrawAmount);
     };
 
@@ -159,7 +153,7 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
 
         try {
             var poolCanisterId = Principal.fromActor(this);
-            let tokenAdapter = TokenFactory.getAdapter(_poolInfo.stakingToken.address, _poolInfo.stakingToken.standard);
+            let tokenAdapter = TokenFactory.getAdapter(_stakingToken.address, _stakingToken.standard);
             var balance : Nat = await tokenAdapter.balanceOf({
                 owner = poolCanisterId;
                 subaccount = subaccount;
@@ -180,19 +174,19 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
 
         try {
             var poolCanisterId = Principal.fromActor(this);
-            let tokenAdapter = TokenFactory.getAdapter(_poolInfo.stakingToken.address, _poolInfo.stakingToken.standard);
+            let tokenAdapter = TokenFactory.getAdapter(_stakingToken.address, _stakingToken.standard);
             var balance : Nat = await tokenAdapter.balanceOf({
                 owner = poolCanisterId;
                 subaccount = subaccount;
             });
-            if (not (balance > 0)) {
+            if (balance <= 0) {
                 return #err("The balance of subaccount is 0");
             };
-            var fee = _poolInfo.stakingTokenFee;
-            if (not (balance > fee)) {
+
+            if (balance <= _stakingTokenFee) {
                 return #err("The balance of subaccount is less than the staking token transfer fee");
             };
-            var amount : Nat = Nat.sub(balance, fee);
+            var amount : Nat = Nat.sub(balance, _stakingTokenFee);
             switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = subaccount }; from_subaccount = subaccount; to = { owner = owner; subaccount = null }; amount = amount; fee = null; memo = null; created_at_time = null })) {
                 case (#Ok(index)) {
                     return #ok("Refund Successfully");
@@ -210,31 +204,30 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
         _checkAdminPermission(msg.caller);
 
         let currentTime = _getTime();
-        if (_poolInfo.bonusEndTime > currentTime) {
+        if (_bonusEndTime > currentTime) {
             return #err("Staking pool is not finish");
         };
 
         try {
-            _preHarvest(owner);
-
             var _userInfo : Types.UserInfo = _getUserInfo(owner);
             var refundAmount = _userInfo.amount;
 
             if (refundAmount == 0) {
-                return #err("The amount of refund can’t be 0");
+                return #err("The amount of refund can't be 0");
             };
-            var fee = _poolInfo.stakingTokenFee;
+            var fee = _stakingTokenFee;
             if (refundAmount < fee) {
                 return #err("The amount of refund is less than the staking token transfer fee");
             };
-            switch (await _pay(_poolInfo.stakingToken, Principal.fromActor(this), null, owner, null, refundAmount - fee)) {
+            switch (await _pay(_stakingToken, Principal.fromActor(this), null, owner, null, refundAmount - fee)) {
                 case (#ok(amount)) {
+                    _preHarvest(owner);
                     var amount = refundAmount;
-                    _ledgerAmount.unStaking += Float.div(_natToFloat(amount), Float.pow(10, _natToFloat(_poolInfo.stakingTokenDecimals)));
+                    _ledgerAmount.unStaking += Float.div(_natToFloat(amount), Float.pow(10, _natToFloat(_stakingTokenDecimals)));
                     _userInfo.amount := Nat.sub(_userInfo.amount, amount);
-                    _poolInfo.totalDeposit := Nat.sub(_poolInfo.totalDeposit, amount);
+                    _totalDeposit := Nat.sub(_totalDeposit, amount);
                     _userInfo.rewardDebt := Nat.div(
-                        Nat.mul(_userInfo.amount, _poolInfo.accPerShare),
+                        Nat.mul(_userInfo.amount, _accPerShare),
                         _arithmeticFactor,
                     );
                     _userInfoMap.put(owner, _userInfo);
@@ -242,14 +235,14 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                     _saveRecord({
                         to = owner;
                         from = Principal.fromActor(this);
-                        rewardStandard = _poolInfo.rewardToken.standard;
-                        rewardToken = _poolInfo.rewardToken.address;
-                        rewardTokenDecimals = _poolInfo.rewardTokenDecimals;
-                        rewardTokenSymbol = _poolInfo.rewardTokenSymbol;
-                        stakingStandard = _poolInfo.rewardToken.standard;
-                        stakingToken = _poolInfo.stakingToken.address;
-                        stakingTokenSymbol = _poolInfo.stakingTokenSymbol;
-                        stakingTokenDecimals = _poolInfo.stakingTokenDecimals;
+                        rewardStandard = _rewardToken.standard;
+                        rewardToken = _rewardToken.address;
+                        rewardTokenDecimals = _rewardTokenDecimals;
+                        rewardTokenSymbol = _rewardTokenSymbol;
+                        stakingStandard = _rewardToken.standard;
+                        stakingToken = _stakingToken.address;
+                        stakingTokenSymbol = _stakingTokenSymbol;
+                        stakingTokenDecimals = _stakingTokenDecimals;
                         amount = amount;
                         timestamp = nowTime;
                         transType = #unstake;
@@ -271,32 +264,32 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
     };
 
     public shared (msg) func withdrawRewardFee() : async Result.Result<Text, Text> {
-        assert (Principal.equal(msg.caller, params.feeReceiverCid));
+        assert (Principal.equal(msg.caller, initArgs.feeReceiverCid));
 
         try {
             var poolCanisterId = Principal.fromActor(this);
-            let tokenAdapter = TokenFactory.getAdapter(_poolInfo.rewardToken.address, _poolInfo.rewardToken.standard);
+            let tokenAdapter = TokenFactory.getAdapter(_rewardToken.address, _rewardToken.standard);
             var balance : Nat = await tokenAdapter.balanceOf({
                 owner = poolCanisterId;
                 subaccount = null;
             });
-            if (not (balance > 0)) {
+            if (balance <= 0) {
                 return #err("The reward token balance of pool is 0");
             };
-            var fee = _poolInfo.rewardTokenFee;
-            if (not (balance > fee)) {
+
+            if (balance <= _rewardTokenFee) {
                 return #err("The reward token balance of pool is less than the reward token transfer fee");
             };
             let pending = Nat.sub(_totalRewardFee, _receivedRewardFee);
-            if (not (balance > pending)) {
+            if (balance <= pending) {
                 return #err("The reward token balance of pool is less than the reward fee");
             };
-            if (not (pending > fee)) {
+            if (pending <= _rewardTokenFee) {
                 return #err("The unclaimd reward token fee of pool is less than the reward token transfer fee");
             };
 
-            var amount : Nat = Nat.sub(pending, fee);
-            switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = null }; from_subaccount = null; to = { owner = params.feeReceiverCid; subaccount = null }; amount = amount; fee = ?fee; memo = null; created_at_time = null })) {
+            var amount : Nat = Nat.sub(pending, _rewardTokenFee);
+            switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = null }; from_subaccount = null; to = { owner = initArgs.feeReceiverCid; subaccount = null }; amount = amount; fee = ?_rewardTokenFee; memo = null; created_at_time = null })) {
                 case (#Ok(index)) {
                     _receivedRewardFee += pending;
                     return #ok("Withdraw reward fee successfully");
@@ -313,11 +306,11 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
     public shared (msg) func stake() : async Result.Result<Text, Text> {
         if (Principal.isAnonymous(msg.caller)) return #err("Illegal anonymous call");
         let currentTime = _getTime();
-        if (_poolInfo.startTime > currentTime or _poolInfo.bonusEndTime < currentTime) {
+        if (_startTime > currentTime or _bonusEndTime < currentTime) {
             return #err("Staking pool is not available for now");
         };
-        if (Text.notEqual(_poolInfo.stakingToken.standard, "ICP") and Text.notEqual(_poolInfo.stakingToken.standard, "ICRC1") and Text.notEqual(_poolInfo.stakingToken.standard, "ICRC2")) {
-            return #err("Illegal token standard: " # debug_show (_poolInfo.stakingToken.standard));
+        if (Text.notEqual(_stakingToken.standard, "ICP") and Text.notEqual(_stakingToken.standard, "ICRC1") and Text.notEqual(_stakingToken.standard, "ICRC2")) {
+            return #err("Illegal token standard: " # debug_show (_stakingToken.standard));
         };
         var subaccount : ?Blob = Option.make(Types.principalToBlob(msg.caller));
         if (null == subaccount) {
@@ -326,31 +319,30 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
 
         try {
             var poolCanisterId = Principal.fromActor(this);
-            let tokenAdapter = TokenFactory.getAdapter(_poolInfo.stakingToken.address, _poolInfo.stakingToken.standard);
+            let tokenAdapter = TokenFactory.getAdapter(_stakingToken.address, _stakingToken.standard);
             var balance : Nat = await tokenAdapter.balanceOf({
                 owner = poolCanisterId;
                 subaccount = subaccount;
             });
-            if (not (balance > 0)) {
+            if (balance <= 0) {
                 return #err("The amount of stake can’t be 0");
             };
-            var fee = _poolInfo.stakingTokenFee;
-            if (not (balance > fee)) {
+
+            if (balance <= _stakingTokenFee) {
                 return #err("The amount of stake is less than the staking token transfer fee");
             };
-            var amount : Nat = Nat.sub(balance, fee);
+            var amount : Nat = Nat.sub(balance, _stakingTokenFee);
 
-            _preHarvest(msg.caller);
-
-            switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = subaccount }; from_subaccount = subaccount; to = { owner = poolCanisterId; subaccount = null }; amount = amount; fee = ?fee; memo = null; created_at_time = null })) {
+            switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = subaccount }; from_subaccount = subaccount; to = { owner = poolCanisterId; subaccount = null }; amount = amount; fee = ?_stakingTokenFee; memo = null; created_at_time = null })) {
                 case (#Ok(index)) {
+                    _preHarvest(msg.caller);
                     var nowTime = _getTime();
-                    _ledgerAmount.staking += Float.div(_natToFloat(amount), Float.pow(10, _natToFloat(_poolInfo.stakingTokenDecimals)));
+                    _ledgerAmount.staking += Float.div(_natToFloat(amount), Float.pow(10, _natToFloat(_stakingTokenDecimals)));
                     var _userInfo : Types.UserInfo = _getUserInfo(msg.caller);
                     _userInfo.amount := Nat.add(_userInfo.amount, amount);
-                    _poolInfo.totalDeposit := Nat.add(_poolInfo.totalDeposit, amount);
+                    _totalDeposit := Nat.add(_totalDeposit, amount);
                     _userInfo.rewardDebt := Nat.div(
-                        Nat.mul(_userInfo.amount, _poolInfo.accPerShare),
+                        Nat.mul(_userInfo.amount, _accPerShare),
                         _arithmeticFactor,
                     );
                     _userInfo.lastStakeTime := nowTime;
@@ -358,14 +350,14 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                     _saveRecord({
                         from = msg.caller;
                         to = Principal.fromActor(this);
-                        rewardStandard = _poolInfo.rewardToken.standard;
-                        rewardTokenSymbol = _poolInfo.rewardTokenSymbol;
-                        rewardTokenDecimals = _poolInfo.rewardTokenDecimals;
-                        rewardToken = _poolInfo.rewardToken.address;
-                        stakingStandard = _poolInfo.stakingToken.standard;
-                        stakingToken = _poolInfo.stakingToken.address;
-                        stakingTokenSymbol = _poolInfo.stakingTokenSymbol;
-                        stakingTokenDecimals = _poolInfo.stakingTokenDecimals;
+                        rewardStandard = _rewardToken.standard;
+                        rewardTokenSymbol = _rewardTokenSymbol;
+                        rewardTokenDecimals = _rewardTokenDecimals;
+                        rewardToken = _rewardToken.address;
+                        stakingStandard = _stakingToken.standard;
+                        stakingToken = _stakingToken.address;
+                        stakingTokenSymbol = _stakingTokenSymbol;
+                        stakingTokenDecimals = _stakingTokenDecimals;
                         amount = amount;
                         timestamp = nowTime;
                         transType = #stake;
@@ -384,43 +376,42 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
     public shared (msg) func stakeFrom(amount : Nat) : async Result.Result<Text, Text> {
         if (Principal.isAnonymous(msg.caller)) return #err("Illegal anonymous call");
         let currentTime = _getTime();
-        if (_poolInfo.startTime > currentTime or _poolInfo.bonusEndTime < currentTime) {
+        if (_startTime > currentTime or _bonusEndTime < currentTime) {
             return #err("Staking pool is not available for now");
         };
-        if (Text.notEqual(_poolInfo.stakingToken.standard, "ICP") and Text.notEqual(_poolInfo.stakingToken.standard, "ICRC1") and Text.notEqual(_poolInfo.stakingToken.standard, "ICRC2")) {
-            return #err("Illegal token standard: " # debug_show (_poolInfo.stakingToken.standard));
+        if (Text.notEqual(_stakingToken.standard, "ICP") and Text.notEqual(_stakingToken.standard, "ICRC1") and Text.notEqual(_stakingToken.standard, "ICRC2")) {
+            return #err("Illegal token standard: " # debug_show (_stakingToken.standard));
         };
 
         try {
-            let tokenAdapter = TokenFactory.getAdapter(_poolInfo.stakingToken.address, _poolInfo.stakingToken.standard);
+            let tokenAdapter = TokenFactory.getAdapter(_stakingToken.address, _stakingToken.standard);
             var balance : Nat = await tokenAdapter.balanceOf({
                 owner = msg.caller;
                 subaccount = null;
             });
-            if (not (balance > 0)) {
+            if (balance <= 0) {
                 return #err("The balance can’t be 0");
             };
-            var fee = _poolInfo.stakingTokenFee;
-            if (not (balance > fee)) {
+
+            if (balance <= _stakingTokenFee) {
                 return #err("The balance is less than the staking token transfer fee");
             };
             if (amount > balance) {
                 return #err("The stake amount is higher than the account balance");
             };
-            var stake_amount : Nat = Nat.sub(amount, fee);
-
-            _preHarvest(msg.caller);
+            var stakeAmount : Nat = Nat.sub(amount, _stakingTokenFee);
 
             var poolCanisterId = Principal.fromActor(this);
-            switch (await tokenAdapter.transferFrom({ from = { owner = msg.caller; subaccount = null }; to = { owner = poolCanisterId; subaccount = null }; amount = stake_amount; fee = ?fee; memo = null; created_at_time = null })) {
+            switch (await tokenAdapter.transferFrom({ from = { owner = msg.caller; subaccount = null }; to = { owner = poolCanisterId; subaccount = null }; amount = stakeAmount; fee = ?_stakingTokenFee; memo = null; created_at_time = null })) {
                 case (#Ok(index)) {
+                    _preHarvest(msg.caller);
                     var nowTime = _getTime();
-                    _ledgerAmount.staking += Float.div(_natToFloat(stake_amount), Float.pow(10, _natToFloat(_poolInfo.stakingTokenDecimals)));
+                    _ledgerAmount.staking += Float.div(_natToFloat(stakeAmount), Float.pow(10, _natToFloat(_stakingTokenDecimals)));
                     var _userInfo : Types.UserInfo = _getUserInfo(msg.caller);
-                    _userInfo.amount := Nat.add(_userInfo.amount, stake_amount);
-                    _poolInfo.totalDeposit := Nat.add(_poolInfo.totalDeposit, stake_amount);
+                    _userInfo.amount := Nat.add(_userInfo.amount, stakeAmount);
+                    _totalDeposit := Nat.add(_totalDeposit, stakeAmount);
                     _userInfo.rewardDebt := Nat.div(
-                        Nat.mul(_userInfo.amount, _poolInfo.accPerShare),
+                        Nat.mul(_userInfo.amount, _accPerShare),
                         _arithmeticFactor,
                     );
                     _userInfo.lastStakeTime := nowTime;
@@ -428,15 +419,15 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                     _saveRecord({
                         from = msg.caller;
                         to = Principal.fromActor(this);
-                        rewardStandard = _poolInfo.rewardToken.standard;
-                        rewardTokenSymbol = _poolInfo.rewardTokenSymbol;
-                        rewardTokenDecimals = _poolInfo.rewardTokenDecimals;
-                        rewardToken = _poolInfo.rewardToken.address;
-                        stakingStandard = _poolInfo.stakingToken.standard;
-                        stakingToken = _poolInfo.stakingToken.address;
-                        stakingTokenSymbol = _poolInfo.stakingTokenSymbol;
-                        stakingTokenDecimals = _poolInfo.stakingTokenDecimals;
-                        amount = stake_amount;
+                        rewardStandard = _rewardToken.standard;
+                        rewardTokenSymbol = _rewardTokenSymbol;
+                        rewardTokenDecimals = _rewardTokenDecimals;
+                        rewardToken = _rewardToken.address;
+                        stakingStandard = _stakingToken.standard;
+                        stakingToken = _stakingToken.address;
+                        stakingTokenSymbol = _stakingTokenSymbol;
+                        stakingTokenDecimals = _stakingTokenDecimals;
+                        amount = stakeAmount;
                         timestamp = nowTime;
                         transType = #stake;
                     });
@@ -453,8 +444,6 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
 
     public shared (msg) func unstake(amount : Nat) : async Result.Result<Text, Text> {
         try {
-            _preHarvest(msg.caller);
-
             var _userInfo : Types.UserInfo = _getUserInfo(msg.caller);
             var unstakeAmount = if (amount > _userInfo.amount) {
                 _userInfo.amount;
@@ -464,18 +453,19 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
             if (unstakeAmount == 0) {
                 return #err("The amount of unstake can’t be 0");
             };
-            var fee = _poolInfo.stakingTokenFee;
+            var fee = _stakingTokenFee;
             if (unstakeAmount < fee) {
                 return #err("The amount of unstake is less than the staking token transfer fee");
             };
-            switch (await _pay(_poolInfo.stakingToken, Principal.fromActor(this), null, msg.caller, null, unstakeAmount - fee)) {
+            switch (await _pay(_stakingToken, Principal.fromActor(this), null, msg.caller, null, unstakeAmount - fee)) {
                 case (#ok(amount)) {
+                    _preHarvest(msg.caller);
                     var amount = unstakeAmount;
-                    _ledgerAmount.unStaking += Float.div(_natToFloat(amount), Float.pow(10, _natToFloat(_poolInfo.stakingTokenDecimals)));
+                    _ledgerAmount.unStaking += Float.div(_natToFloat(amount), Float.pow(10, _natToFloat(_stakingTokenDecimals)));
                     _userInfo.amount := Nat.sub(_userInfo.amount, amount);
-                    _poolInfo.totalDeposit := Nat.sub(_poolInfo.totalDeposit, amount);
+                    _totalDeposit := Nat.sub(_totalDeposit, amount);
                     _userInfo.rewardDebt := Nat.div(
-                        Nat.mul(_userInfo.amount, _poolInfo.accPerShare),
+                        Nat.mul(_userInfo.amount, _accPerShare),
                         _arithmeticFactor,
                     );
                     _userInfoMap.put(msg.caller, _userInfo);
@@ -483,14 +473,14 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
                     _saveRecord({
                         to = msg.caller;
                         from = Principal.fromActor(this);
-                        rewardStandard = _poolInfo.rewardToken.standard;
-                        rewardToken = _poolInfo.rewardToken.address;
-                        rewardTokenDecimals = _poolInfo.rewardTokenDecimals;
-                        rewardTokenSymbol = _poolInfo.rewardTokenSymbol;
-                        stakingStandard = _poolInfo.rewardToken.standard;
-                        stakingToken = _poolInfo.stakingToken.address;
-                        stakingTokenSymbol = _poolInfo.stakingTokenSymbol;
-                        stakingTokenDecimals = _poolInfo.stakingTokenDecimals;
+                        rewardStandard = _rewardToken.standard;
+                        rewardToken = _rewardToken.address;
+                        rewardTokenDecimals = _rewardTokenDecimals;
+                        rewardTokenSymbol = _rewardTokenSymbol;
+                        stakingStandard = _rewardToken.standard;
+                        stakingToken = _stakingToken.address;
+                        stakingTokenSymbol = _stakingTokenSymbol;
+                        stakingTokenDecimals = _stakingTokenDecimals;
                         amount = amount;
                         timestamp = nowTime;
                         transType = #unstake;
@@ -517,28 +507,40 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
 
     public shared func claimReward(owner : Principal) : async Result.Result<Bool, Text> {
         var buffer = Buffer.Buffer<Types.Record>(_preRewardRecordBuffer.size());
+        var successBuffer = Buffer.Buffer<Types.Record>(0);
+        var errorBuffer = Buffer.Buffer<Text>(0);
         for (_preReward in _preRewardRecordBuffer.vals()) {
             if (Principal.equal(_preReward.to, owner)) {
-                switch (await _pay(_poolInfo.rewardToken, Principal.fromActor(this), null, _preReward.to, null, _preReward.amount - _poolInfo.rewardTokenFee)) {
-                    case (#ok(amount)) {
-                        _saveRecord(_preReward);
+                try {
+                    switch (await _pay(_rewardToken, Principal.fromActor(this), null, _preReward.to, null, _preReward.amount - _rewardTokenFee)) {
+                        case (#ok(amount)) {
+                            successBuffer.add(_preReward);
+                        };
+                        case (#err(code)) {
+                            let errorMessage = "Claim reward failed at " # debug_show (_getTime()) # ". Code: " # debug_show (code) # ". Reward info: " # debug_show (_preReward);
+                            errorBuffer.add(errorMessage);
+                        };
                     };
-                    case (#err(code)) {
-                        _errorLogBuffer.add("Claim reward failed at " # debug_show (_getTime()) # ". Code: " # debug_show (code) # ". Reward info: " # debug_show (_preReward));
-                    };
+                } catch (e) {
+                    let errorMessage = "Claim reward failed at " # debug_show (_getTime()) # ". Error message: " # debug_show (Error.message(e)) # ". Reward info: " # debug_show (_preReward);
+                    errorBuffer.add(errorMessage);
                 };
             } else {
                 buffer.add(_preReward);
             };
         };
         _preRewardRecordBuffer := buffer;
+        for (record in successBuffer.vals()) {
+            _saveRecord(record);
+        };
+        _errorLogBuffer.append(errorBuffer);
         return #ok(true);
     };
 
     public shared (msg) func claim() : async Result.Result<Text, Text> {
         if (Principal.isAnonymous(msg.caller)) return #err("Illegal anonymous call");
-        if (Text.notEqual(_poolInfo.stakingToken.standard, "ICP") and Text.notEqual(_poolInfo.stakingToken.standard, "ICRC1") and Text.notEqual(_poolInfo.stakingToken.standard, "ICRC2")) {
-            return #err("Illegal token standard: " # debug_show (_poolInfo.stakingToken.standard));
+        if (Text.notEqual(_stakingToken.standard, "ICP") and Text.notEqual(_stakingToken.standard, "ICRC1") and Text.notEqual(_stakingToken.standard, "ICRC2")) {
+            return #err("Illegal token standard: " # debug_show (_stakingToken.standard));
         };
         var subaccount : ?Blob = Option.make(Types.principalToBlob(msg.caller));
         if (null == subaccount) {
@@ -547,20 +549,19 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
 
         try {
             var poolCanisterId = Principal.fromActor(this);
-            let tokenAdapter = TokenFactory.getAdapter(_poolInfo.stakingToken.address, _poolInfo.stakingToken.standard);
+            let tokenAdapter = TokenFactory.getAdapter(_stakingToken.address, _stakingToken.standard);
             var balance : Nat = await tokenAdapter.balanceOf({
                 owner = poolCanisterId;
                 subaccount = subaccount;
             });
-            if (not (balance > 0)) {
+            if (balance <= 0) {
                 return #err("The amount of claim is 0");
             };
-            var fee = _poolInfo.stakingTokenFee;
-            if (not (balance > fee)) {
+            if (balance <= _stakingTokenFee) {
                 return #err("The amount of claim is less than the staking token transfer fee");
             };
-            var amount : Nat = Nat.sub(balance, fee);
-            switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = subaccount }; from_subaccount = subaccount; to = { owner = msg.caller; subaccount = null }; amount = amount; fee = ?fee; memo = null; created_at_time = null })) {
+            var amount : Nat = Nat.sub(balance, _stakingTokenFee);
+            switch (await tokenAdapter.transfer({ from = { owner = poolCanisterId; subaccount = subaccount }; from_subaccount = subaccount; to = { owner = msg.caller; subaccount = null }; amount = amount; fee = ?_stakingTokenFee; memo = null; created_at_time = null })) {
                 case (#Ok(index)) {
                     return #ok("Claim Successfully");
                 };
@@ -721,27 +722,27 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
 
     private func _getPoolInfo() : Result.Result<Types.PublicStakingPoolInfo, Text> {
         return #ok({
-            rewardToken = _poolInfo.rewardToken;
-            rewardTokenSymbol = _poolInfo.rewardTokenSymbol;
-            rewardTokenDecimals = _poolInfo.rewardTokenDecimals;
-            rewardTokenFee = _poolInfo.rewardTokenFee;
-            stakingToken = _poolInfo.stakingToken;
-            stakingTokenSymbol = _poolInfo.stakingTokenSymbol;
-            stakingTokenDecimals = _poolInfo.stakingTokenDecimals;
-            stakingTokenFee = _poolInfo.stakingTokenFee;
+            rewardToken = _rewardToken;
+            rewardTokenSymbol = _rewardTokenSymbol;
+            rewardTokenDecimals = _rewardTokenDecimals;
+            rewardTokenFee = _rewardTokenFee;
+            stakingToken = _stakingToken;
+            stakingTokenSymbol = _stakingTokenSymbol;
+            stakingTokenDecimals = _stakingTokenDecimals;
+            stakingTokenFee = _stakingTokenFee;
 
-            startTime = _poolInfo.startTime;
-            bonusEndTime = _poolInfo.bonusEndTime;
-            lastRewardTime = _poolInfo.lastRewardTime;
-            rewardPerTime = _poolInfo.rewardPerTime;
-            rewardFee = params.rewardFee;
-            accPerShare = _poolInfo.accPerShare;
+            startTime = _startTime;
+            bonusEndTime = _bonusEndTime;
+            lastRewardTime = _lastRewardTime;
+            rewardPerTime = _rewardPerTime;
+            rewardFee = initArgs.rewardFee;
+            accPerShare = _accPerShare;
 
-            totalDeposit = _poolInfo.totalDeposit;
-            rewardDebt = _poolInfo.rewardDebt;
+            totalDeposit = _totalDeposit;
+            rewardDebt = _rewardDebt;
 
-            creator = _poolInfo.creator;
-            createTime = _poolInfo.createTime;
+            creator = _creator;
+            createTime = _createTime;
         });
     };
 
@@ -751,20 +752,20 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
 
     private func _updateTokenInfo() : async () {
         let stakingTokenAdapter = TokenFactory.getAdapter(
-            _poolInfo.stakingToken.address,
-            _poolInfo.stakingToken.standard,
+            _stakingToken.address,
+            _stakingToken.standard,
         );
-        _poolInfo.stakingTokenFee := await stakingTokenAdapter.fee();
-        _poolInfo.stakingTokenDecimals := Nat8.toNat(await stakingTokenAdapter.decimals());
-        _poolInfo.stakingTokenSymbol := await stakingTokenAdapter.symbol();
+        _stakingTokenFee := await stakingTokenAdapter.fee();
+        _stakingTokenDecimals := Nat8.toNat(await stakingTokenAdapter.decimals());
+        _stakingTokenSymbol := await stakingTokenAdapter.symbol();
 
         let rewardTokenAdapter = TokenFactory.getAdapter(
-            _poolInfo.rewardToken.address,
-            _poolInfo.rewardToken.standard,
+            _rewardToken.address,
+            _rewardToken.standard,
         );
-        _poolInfo.rewardTokenFee := await rewardTokenAdapter.fee();
-        _poolInfo.rewardTokenDecimals := Nat8.toNat(await rewardTokenAdapter.decimals());
-        _poolInfo.rewardTokenSymbol := await rewardTokenAdapter.symbol();
+        _rewardTokenFee := await rewardTokenAdapter.fee();
+        _rewardTokenDecimals := Nat8.toNat(await rewardTokenAdapter.decimals());
+        _rewardTokenSymbol := await rewardTokenAdapter.symbol();
     };
 
     private func _getUserInfo(user : Principal) : Types.UserInfo {
@@ -811,14 +812,14 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
         var _lastRewardTime = lastRewardTime;
 
         if (_lastRewardTime == 0) {
-            _lastRewardTime := _poolInfo.startTime;
+            _lastRewardTime := _startTime;
         };
 
-        if (_lastRewardTime < _poolInfo.bonusEndTime) {
-            if (nowTime <= _poolInfo.bonusEndTime) {
+        if (_lastRewardTime < _bonusEndTime) {
+            if (nowTime <= _bonusEndTime) {
                 return Nat.sub(nowTime, _lastRewardTime);
             } else {
-                return Nat.sub(_poolInfo.bonusEndTime, _lastRewardTime);
+                return Nat.sub(_bonusEndTime, _lastRewardTime);
             };
         } else {
             return 0;
@@ -828,13 +829,13 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
     private func _pendingReward(user : Principal) : Nat {
         var nowTime = _getTime();
         var _userInfo : Types.UserInfo = _getUserInfo(user);
-        if (nowTime > _poolInfo.lastRewardTime and _poolInfo.totalDeposit != 0) {
-            var rewardInterval : Nat = _getRewardInterval(_poolInfo.lastRewardTime, nowTime);
-            var reward : Nat = Nat.mul(rewardInterval, _poolInfo.rewardPerTime);
-            _poolInfo.accPerShare := Nat.add(_poolInfo.accPerShare, Nat.div(Nat.mul(reward, _arithmeticFactor), _poolInfo.totalDeposit));
+        if (nowTime > _lastRewardTime and _totalDeposit != 0) {
+            var rewardInterval : Nat = _getRewardInterval(_lastRewardTime, nowTime);
+            var reward : Nat = Nat.mul(rewardInterval, _rewardPerTime);
+            _accPerShare := Nat.add(_accPerShare, Nat.div(Nat.mul(reward, _arithmeticFactor), _totalDeposit));
         };
-        var rewardAmount = Nat.sub(Nat.div(Nat.mul(_userInfo.amount, _poolInfo.accPerShare), _arithmeticFactor), _userInfo.rewardDebt);
-        let rewardTokenFee : Nat = Nat.div(Nat.mul(rewardAmount, params.rewardFee), 100);
+        var rewardAmount = Nat.sub(Nat.div(Nat.mul(_userInfo.amount, _accPerShare), _arithmeticFactor), _userInfo.rewardDebt);
+        let rewardTokenFee : Nat = Nat.div(Nat.mul(rewardAmount, initArgs.rewardFee), 1000);
         if (rewardTokenFee > 0) {
             rewardAmount := rewardAmount - rewardTokenFee;
         };
@@ -847,49 +848,49 @@ shared (initMsg) actor class StakingPool(params : Types.InitRequests) : async Ty
 
     private func _preHarvest(caller : Principal) : () {
         var nowTime = _getTime();
-        var accPerShare = _poolInfo.accPerShare;
+        var accPerShare = _accPerShare;
         var lastRewardTime = nowTime;
-        if (_poolInfo.totalDeposit > 0) {
-            var rewardInterval : Nat = _getRewardInterval(_poolInfo.lastRewardTime, nowTime);
-            var reward : Nat = Nat.mul(rewardInterval, _poolInfo.rewardPerTime);
-            accPerShare := Nat.add(_poolInfo.accPerShare, Nat.div(Nat.mul(reward, _arithmeticFactor), _poolInfo.totalDeposit));
+        if (_totalDeposit > 0) {
+            var rewardInterval : Nat = _getRewardInterval(lastRewardTime, nowTime);
+            var reward : Nat = Nat.mul(rewardInterval, _rewardPerTime);
+            accPerShare := Nat.add(accPerShare, Nat.div(Nat.mul(reward, _arithmeticFactor), _totalDeposit));
         };
 
         var _userInfo : Types.UserInfo = _getUserInfo(caller);
         var pending : Nat = Nat.sub(Nat.div(Nat.mul(_userInfo.amount, accPerShare), _arithmeticFactor), _userInfo.rewardDebt);
-        if (pending == 0 or pending < _poolInfo.rewardTokenFee) {
+        if (pending == 0 or pending < _rewardTokenFee) {
             return;
         };
         var rewardAmount = pending;
-        let rewardFee : Nat = Nat.div(Nat.mul(rewardAmount, params.rewardFee), 100);
+        let rewardFee : Nat = Nat.div(Nat.mul(rewardAmount, initArgs.rewardFee), 1000);
         if (rewardFee > 0) {
             _totalRewardFee += rewardFee;
             rewardAmount := rewardAmount - rewardFee;
         };
 
-        if (rewardAmount < _poolInfo.rewardTokenFee) {
+        if (rewardAmount < _rewardTokenFee) {
             _totalRewardFee -= rewardFee;
             return;
         };
 
-        _ledgerAmount.harvest += Float.div(_natToFloat(Nat.sub(rewardAmount, _poolInfo.rewardTokenFee)), Float.pow(10, _natToFloat(_poolInfo.rewardTokenDecimals)));
-        _poolInfo.rewardDebt := _poolInfo.rewardDebt + pending;
-        _poolInfo.accPerShare := accPerShare;
-        _poolInfo.lastRewardTime := lastRewardTime;
+        _ledgerAmount.harvest += Float.div(_natToFloat(Nat.sub(rewardAmount, _rewardTokenFee)), Float.pow(10, _natToFloat(_rewardTokenDecimals)));
+        _rewardDebt := _rewardDebt + pending;
+        accPerShare := accPerShare;
+        lastRewardTime := lastRewardTime;
         _userInfo.rewardDebt := Nat.div(Nat.mul(_userInfo.amount, accPerShare), _arithmeticFactor);
         _userInfo.lastRewardTime := lastRewardTime;
         _userInfoMap.put(caller, _userInfo);
         var _harvestRecord = {
             from = Principal.fromActor(this);
             to = caller;
-            rewardStandard = _poolInfo.rewardToken.standard;
-            rewardToken = _poolInfo.rewardToken.address;
-            rewardTokenSymbol = _poolInfo.rewardTokenSymbol;
-            rewardTokenDecimals = _poolInfo.rewardTokenDecimals;
-            stakingStandard = _poolInfo.stakingToken.standard;
-            stakingToken = _poolInfo.stakingToken.address;
-            stakingTokenDecimals = _poolInfo.stakingTokenDecimals;
-            stakingTokenSymbol = _poolInfo.stakingTokenSymbol;
+            rewardStandard = _rewardToken.standard;
+            rewardToken = _rewardToken.address;
+            rewardTokenSymbol = _rewardTokenSymbol;
+            rewardTokenDecimals = _rewardTokenDecimals;
+            stakingStandard = _stakingToken.standard;
+            stakingToken = _stakingToken.address;
+            stakingTokenDecimals = _stakingTokenDecimals;
+            stakingTokenSymbol = _stakingTokenSymbol;
             amount = rewardAmount;
             timestamp = nowTime;
             transType = #harvest;

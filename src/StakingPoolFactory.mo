@@ -36,7 +36,7 @@ shared (initMsg) actor class StakingPoolController(
     };
 
     private var _initCycles : Nat = 1860000000000;
-    private stable var _rewardFee : Nat = 5;
+    private stable var _rewardFee : Nat = 50;
     private stable var _tokenPriceCanisterId = "arfra-7aaaa-aaaag-qb2aq-cai";
 
     private stable var _stakingPoolList : [(Principal, Types.StakingPoolInfo)] = [];
