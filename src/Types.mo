@@ -1,8 +1,6 @@
-import Prim "mo:⛔";
 import Nat "mo:base/Nat";
 import Bool "mo:base/Bool";
 import Text "mo:base/Text";
-import Hash "mo:base/Hash";
 import Result "mo:base/Result";
 import Principal "mo:base/Principal";
 import Float "mo:base/Float";
@@ -12,11 +10,18 @@ import Nat8 "mo:base/Nat8";
 
 module {
 
-    public func equal(x : Nat, y : Nat) : Bool {
-        return Nat.equal(x, y);
+    public func natToBlob(x : Nat) : Blob {
+        let arr : [Nat8] = fromNat(8, x);
+        return Blob.fromArray(arr);
     };
-    public func hash(x : Nat) : Hash.Hash {
-        return Prim.natToNat32(x);
+
+    public func fromNat(len : Nat, n : Nat) : [Nat8] {
+        let ith_byte = func(i : Nat) : Nat8 {
+            assert (i < len);
+            let shift : Nat = 8 * (len - 1 - i);
+            Nat8.fromIntWrap(n / 2 ** shift);
+        };
+        return Array.tabulate<Nat8>(len, ith_byte);
     };
 
     public func principalToBlob(p : Principal) : Blob {
@@ -47,6 +52,7 @@ module {
         address : Text;
         standard : Text;
     };
+
     public type Error = {
         #CommonError;
         #InternalError : Text;
@@ -55,30 +61,31 @@ module {
     };
 
     public type TransType = {
-        #harvest;
+        #deposit;
+        #withdraw;
         #stake;
         #unstake;
+        #harvest;
+        #liquidate;
     };
 
-    public type LedgerAmountState = {
-        var harvest : Float;
-        var staking : Float;
-        var unStaking : Float;
+    public type TransTokenType = {
+        #stakeToken;
+        #rewardToken;
     };
 
-    public type LedgerAmountInfo = {
-        harvest : Float;
-        staking : Float;
-        unStaking : Float;
+    public type LiquidationStatus = {
+        #pending;
+        #liquidation;
+        #liquidated;
     };
 
-    public type GlobalDataState = {
-        var stakingAmount : Float;
-        var rewardAmount : Float;
-    };
     public type GlobalDataInfo = {
-        stakingAmount : Float;
-        rewardAmount : Float;
+        valueOfStaking : Float;
+        valueOfRewardsInProgress : Float;
+        valueOfRewarded : Float;
+        totalPools : Nat;
+        totalStaker : Nat;
     };
     public type TokenGlobalDataState = {
         var stakingTokenCanisterId : Text;
@@ -104,6 +111,7 @@ module {
     public type Record = {
         timestamp : Nat;
         transType : TransType;
+        transTokenType : TransTokenType;
         from : Principal;
         to : Principal;
         amount : Nat;
@@ -115,16 +123,22 @@ module {
         rewardTokenDecimals : Nat;
         rewardTokenSymbol : Text;
         rewardStandard : Text;
+        errMsg : Text;
+        result : Text;
     };
 
     public type UserInfo = {
-        var amount : Nat;
+        var stakeTokenBalance : Nat;
+        var rewardTokenBalance : Nat;
+        var stakeAmount : Nat;
         var rewardDebt : Nat;
         var lastStakeTime : Nat;
         var lastRewardTime : Nat;
     };
     public type PublicUserInfo = {
-        amount : Nat;
+        stakeTokenBalance : Nat;
+        rewardTokenBalance : Nat;
+        stakeAmount : Nat;
         rewardDebt : Nat;
         pendingReward : Nat;
         lastStakeTime : Nat;
@@ -153,6 +167,8 @@ module {
         var rewardDebt : Nat;
     };
     public type PublicStakingPoolInfo = {
+        name : Text;
+
         rewardToken : Token;
         rewardTokenSymbol : Text;
         rewardTokenDecimals : Nat;
@@ -161,17 +177,28 @@ module {
         stakingTokenSymbol : Text;
         stakingTokenFee : Nat;
         stakingTokenDecimals : Nat;
+
         startTime : Nat;
         bonusEndTime : Nat;
-        lastRewardTime : Nat;
         rewardPerTime : Nat;
         rewardFee : Nat;
+        feeReceiverCid : Principal;
+
+        creator : Principal;
+        createTime : Nat;
+
+        lastRewardTime : Nat;
         accPerShare : Nat;
         totalDeposit : Nat;
         rewardDebt : Nat;
-        creator : Principal;
-        createTime : Nat;
+
+        totalHarvest : Float;
+        totalStaked : Float;
+        totalUnstaked : Float;
+
+        liquidationStatus : LiquidationStatus; //0:pending,1:liquidation,2:liquidated
     };
+
     public type StakingPoolInfo = {
         canisterId : Principal;
         name : Text;
@@ -226,54 +253,27 @@ module {
     };
 
     public type UpdateStakingPool = {
-        rewardToken : Token;
-        rewardTokenFee : Nat;
-        rewardTokenSymbol : Text;
-        rewardTokenDecimals : Nat;
-        stakingToken : Token;
-        stakingTokenFee : Nat;
-        stakingTokenSymbol : Text;
-        stakingTokenDecimals : Nat;
-
         startTime : Nat;
         bonusEndTime : Nat;
         rewardPerTime : Nat;
     };
 
-    public class TokenPrice(canister_id : ?Text) {
-        let default_canister_id : Text = "arfra-7aaaa-aaaag-qb2aq-cai";
-        let price_canister_id : Text = switch (canister_id) {
-            case (?_canister_id) { _canister_id };
-            case (null) { default_canister_id };
-        };
-
-        let tokenPrice : ITokenPrice = actor (price_canister_id) : ITokenPrice;
-
-        public func getToken2ICPPrice(address : Text, standard : Text, tokenDecimals : Nat) : async Float {
-            switch (await tokenPrice.getToken2ICPPrice(address, standard, tokenDecimals)) {
-                case (#ok(price)) return price;
-                case (#err(msg)) return 0.0000;
-            };
-        };
-    };
-
-    public type ITokenPrice = actor {
-        getToken2ICPPrice : shared (address : Text, standard : Text, tokenDecimals : Nat) -> async Result.Result<Float, Text>;
-    };
-
     public type IStakingPool = actor {
-        updateStakingPool : shared UpdateStakingPool -> async Result.Result<Bool, Text>;
+        updateStakingPool : shared UpdateStakingPool -> async Result.Result<PublicStakingPoolInfo, Text>;
         stop : shared () -> async Result.Result<PublicStakingPoolInfo, Text>;
-        setTime : shared (startTime : Nat, bonusEndTime : Nat) -> async Result.Result<PublicStakingPoolInfo, Text>;
+
         unclaimdRewardFee : query () -> async Result.Result<Nat, Text>;
         withdrawRewardFee : shared () -> async Result.Result<Text, Text>;
 
-        stake : shared () -> async Result.Result<Text, Text>;
-        stakeFrom : shared Nat -> async Result.Result<Text, Text>;
-        harvest : shared () -> async Result.Result<Bool, Text>;
-        unstake : shared Nat -> async Result.Result<Text, Text>;
+        deposit : shared () -> async Result.Result<Text, Text>;
+        depositFrom : shared (amount : Nat) -> async Result.Result<Text, Text>;
+        stake : shared () -> async Result.Result<Nat, Text>;
+        unstake : shared Nat -> async Result.Result<Nat, Text>;
+        harvest : shared () -> async Result.Result<Nat, Text>;
+        withdraw : shared (isStakeToken : Bool, amount : Nat) -> async Result.Result<Text, Text>;
         claim : shared () -> async Result.Result<Text, Text>;
 
+        findUserInfo : query (offset : Nat, limit : Nat) -> async Result.Result<Page<(Principal, PublicUserInfo)>, Text>;
         getUserInfo : query Principal -> async Result.Result<PublicUserInfo, Text>;
         getPoolInfo : query () -> async Result.Result<PublicStakingPoolInfo, Text>;
         pendingReward : query Principal -> async Result.Result<Nat, Text>;

@@ -9,6 +9,7 @@ import Cycles "mo:base/ExperimentalCycles";
 import TokenAdapterTypes "mo:token-adapter/Types";
 import TokenFactory "mo:token-adapter/TokenFactory";
 import Types "./Types";
+
 shared (initMsg) actor class StakingFeeReceiver() = this {
 
     private func _checkStandard(standard : Text) : Bool {
@@ -99,6 +100,7 @@ shared (initMsg) actor class StakingFeeReceiver() = this {
             // Controller
             case (#claim args) { Prim.isController(caller) };
             case (#transfer args) { Prim.isController(caller) };
+            case(#transferAll args) {Prim.isController(caller)};
             // Anyone
             case (_) { true };
         };
