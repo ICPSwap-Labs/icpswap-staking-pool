@@ -107,7 +107,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
             Timer.cancelTimer(_updateTokenInfoId);
         };
         let _harvestAmount = _harvest(Principal.fromText("aaaaa-aa"));
-        
+        _lastRewardTime := now;
         _startTime := params.startTime;
         _bonusEndTime := params.bonusEndTime;
         _rewardPerTime := params.rewardPerTime;
@@ -166,7 +166,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
                 _arithmeticFactor,
             );
             _userInfoMap.put(userPrincipal, userInfo);
-            let publicUserInfo = _convert2PubUserInfo(userPrincipal, userInfo, 0);
+            let publicUserInfo = _convert2PubUserInfo(userPrincipal, userInfo);
             ignore _userIndexActor.updateUser(userPrincipal, publicUserInfo);
         };
         _liquidationStatus := #liquidation;
@@ -257,7 +257,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
                             var userInfo = _getUserInfo(userPrincipal);
                             userInfo.stakeTokenBalance := Nat.add(userInfo.stakeTokenBalance, record.amount);
                             _userInfoMap.put(userPrincipal, userInfo);
-                            let publicUserInfo = _convert2PubUserInfo(userPrincipal, userInfo, _pendingReward(userPrincipal));
+                            let publicUserInfo = _convert2PubUserInfo(userPrincipal, userInfo);
                             ignore _userIndexActor.updateUser(userPrincipal, publicUserInfo);
                         };
                     } else {
@@ -265,7 +265,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
                             var userInfo = _getUserInfo(userPrincipal);
                             userInfo.rewardTokenBalance := Nat.add(userInfo.rewardTokenBalance, record.amount);
                             _userInfoMap.put(userPrincipal, userInfo);
-                            let publicUserInfo = _convert2PubUserInfo(userPrincipal, userInfo, _pendingReward(userPrincipal));
+                            let publicUserInfo = _convert2PubUserInfo(userPrincipal, userInfo);
                             ignore _userIndexActor.updateUser(userPrincipal, publicUserInfo);
                         };
                     };
@@ -376,7 +376,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
                     _userInfoMap.put(msg.caller, userInfo);
                     _postTransferComplete(index);
 
-                    let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo, _pendingReward(msg.caller));
+                    let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo);
                     ignore _userIndexActor.updateUser(msg.caller, publicUserInfo);
                     return #ok("Deposit successfully");
                 };
@@ -445,7 +445,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
                     _userInfoMap.put(msg.caller, userInfo);
                     _postTransferComplete(index);
 
-                    let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo, _pendingReward(msg.caller));
+                    let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo);
                     ignore _userIndexActor.updateUser(msg.caller, publicUserInfo);
                     return #ok("Deposit successfully");
                 };
@@ -514,7 +514,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
         );
         userInfo.lastStakeTime := nowTime;
         _userInfoMap.put(msg.caller, userInfo);
-        let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo, _pendingReward(msg.caller));
+        let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo);
         ignore _userIndexActor.updateUser(msg.caller, publicUserInfo);
         return #ok(harvestAmount);
     };
@@ -564,7 +564,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
         );
         _userInfoMap.put(msg.caller, userInfo);
 
-        let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo, _pendingReward(msg.caller));
+        let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo);
         ignore _userIndexActor.updateUser(msg.caller, publicUserInfo);
         return #ok(harvestAmount);
     };
@@ -573,7 +573,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
         try {
             let harvestAmount = _harvest(msg.caller);
             var userInfo : Types.UserInfo = _getUserInfo(msg.caller);
-            let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo, _pendingReward(msg.caller));
+            let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo);
             ignore _userIndexActor.updateUser(msg.caller, publicUserInfo);
             return #ok(harvestAmount);
         } catch (e) {
@@ -918,7 +918,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
         let index = _preTransfer(record);
         _userInfoMap.put(to, userInfo);
 
-        let publicUserInfo = _convert2PubUserInfo(to, userInfo, _pendingReward(to));
+        let publicUserInfo = _convert2PubUserInfo(to, userInfo);
         ignore _userIndexActor.updateUser(to, publicUserInfo);
 
         try {
@@ -1064,13 +1064,13 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
         return Nat64.toNat(Int64.toNat64(Int64.fromInt(Time.now() / 1000000000)));
     };
 
-    private func _convert2PubUserInfo(userPrincipal : Principal, userInfo : Types.UserInfo, pendingReward : Nat) : Types.PublicUserInfo {
+    private func _convert2PubUserInfo(userPrincipal : Principal, userInfo : Types.UserInfo) : Types.PublicUserInfo {
         let publicUserInfo = {
             stakeTokenBalance = userInfo.stakeTokenBalance;
             rewardTokenBalance = userInfo.rewardTokenBalance;
             stakeAmount = userInfo.stakeAmount;
             rewardDebt = userInfo.rewardDebt;
-            pendingReward = pendingReward;
+            pendingReward = 0;
             lastRewardTime = userInfo.lastRewardTime;
             lastStakeTime = userInfo.lastStakeTime;
         };
