@@ -55,6 +55,8 @@ shared (initMsg) actor class StakingPoolFactory(
     private stable var _timeToUpdateGlobalData = 0;
     private stable var _timeToSyncStaker = 0;
 
+    private stable var _userIndexCid : Principal = Principal.fromText("aaaaa-aa");
+
     private var _updateStakingPoolsGlobalDataState = true;
 
     system func preupgrade() {
@@ -85,8 +87,19 @@ shared (initMsg) actor class StakingPoolFactory(
         return #ok(true);
     };
 
+    public shared (msg) func setUserIndexCanister(cid : Principal) : async Result.Result<Bool, Text> {
+        _checkAdminPermission(msg.caller);
+        _userIndexCid := cid;
+        return #ok(true);
+    };
+
     public shared (msg) func createStakingPool(params : Types.InitRequest) : async Result.Result<Principal, Text> {
         _checkAdminPermission(msg.caller);
+
+        if (Principal.equal(_userIndexCid, Principal.fromText("aaaaa-aa"))) {
+            return #err("UserIndexCanister is not set");
+        };
+
         let balance = Cycles.balance();
         if (balance < (4 * _initCycles)) {
             return #err("Insufficient controller cycle balance");
@@ -97,6 +110,7 @@ shared (initMsg) actor class StakingPoolFactory(
             feeReceiverCid = feeReceiverCid;
             creator = msg.caller;
             createTime = _getTime();
+            userIndexCid = _userIndexCid;
         };
         let stakingPool = await StakingPool.StakingPool(requests);
         let stakingPoolCanister : Principal = Principal.fromActor(stakingPool);
@@ -167,8 +181,12 @@ shared (initMsg) actor class StakingPoolFactory(
         await stakingPoolCanister.unclaimdRewardFee();
     };
 
-    public query func getInitArgs() : async Result.Result<{ feeReceiverCid : Principal; governanceCid : ?Principal }, Types.Error> {
-        #ok({ feeReceiverCid = feeReceiverCid; governanceCid = governanceCid });
+    public query func getInitArgs() : async Result.Result<{ feeReceiverCid : Principal; governanceCid : ?Principal; userIndexCid : Principal }, Types.Error> {
+        #ok({
+            feeReceiverCid = feeReceiverCid;
+            governanceCid = governanceCid;
+            userIndexCid = _userIndexCid;
+        });
     };
 
     public query func getStakingPool(poolCanisterId : Principal) : async Result.Result<Types.StakingPoolInfo, Text> {

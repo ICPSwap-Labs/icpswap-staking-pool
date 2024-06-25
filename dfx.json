@@ -8,6 +8,10 @@
             "main": "./src/StakingPoolFactory.mo",
             "type": "motoko"
         },
+        "UserIndex":{
+            "main": "./src/UserIndex.mo",
+            "type": "motoko"
+        },
         "TestTokenA": {
             "wasm": "./test/icrc2/icrc2.wasm",
             "type": "custom",

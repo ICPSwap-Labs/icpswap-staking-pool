@@ -250,6 +250,7 @@ module {
         feeReceiverCid : Principal;
         creator : Principal;
         createTime : Nat;
+        userIndexCid : Principal;
     };
 
     public type UpdateStakingPool = {
@@ -277,6 +278,15 @@ module {
         getUserInfo : query Principal -> async Result.Result<PublicUserInfo, Text>;
         getPoolInfo : query () -> async Result.Result<PublicStakingPoolInfo, Text>;
         pendingReward : query Principal -> async Result.Result<Nat, Text>;
+    };
+
+    public type IStakingPoolFactory = actor {
+        findStakingPoolPage : shared query (state : ?Nat, offset : Nat, limit : Nat) -> async Result.Result<Page<StakingPoolInfo>, Page<StakingPoolInfo>>;
+        getStakingPool : shared query (poolCanisterId : Principal) -> async Result.Result<StakingPoolInfo, Text>;
+    };
+
+    public type IUserIndex = actor {
+        updateUser : shared (userPrincipal : Principal, userInfo : PublicUserInfo) -> async Result.Result<Bool, Text>;
     };
 
     public type StakingFeeReceiver = {

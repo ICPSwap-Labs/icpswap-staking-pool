@@ -17,6 +17,7 @@ deploy(){
   
   deploy_feeReceiver
   deploy_factory
+  deploy_index
   deploy_TestToken
   deploy_stakingPool
   
@@ -29,12 +30,20 @@ deploy_feeReceiver(){
 
 deploy_factory(){
       echo "==> install StakingPoolFactory"
-      feeReceiverCid=$(dfx canister id StakingFeeReceiver)
+      feeReceiverCid=$(dfx canister --network=$env id StakingFeeReceiver)
       echo "feeReceiverCid: $feeReceiverCid"
       echo "governanceCid: $governanceCid"
       dfx deploy --no-wallet --with-cycles=200000000000000000 --network=$env StakingPoolFactory --argument "(principal \"$feeReceiverCid\",opt principal \"$governanceCid\")"
-      stakingPoolFactoryCid=$(dfx canister id StakingPoolFactory)
+      stakingPoolFactoryCid=$(dfx canister --network=$env id StakingPoolFactory)
       echo "stakingPoolFactoryCid: $stakingPoolFactoryCid"
+}
+
+deploy_index(){
+    echo "==> install UserIndex"
+    stakingPoolFactoryCid=$(dfx canister --network=$env id StakingPoolFactory)
+    dfx deploy --network=$env UserIndex --argument "(principal \"$stakingPoolFactoryCid\")"
+    userIndexCid=$(dfx canister --network=$env id UserIndex)
+    dfx canister --network=$env call StakingPoolFactory setUserIndexCanister "(principal \"$userIndexCid\")"
 }
 
 deploy_TestToken(){

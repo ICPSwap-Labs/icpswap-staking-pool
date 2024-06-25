@@ -68,6 +68,8 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
     private var _preTransferMap : HashMap.HashMap<Nat, Types.Record> = HashMap.fromIter<Nat, Types.Record>(_preTransfers.vals(), 0, Nat.equal, Hash.hash);
     private stable var _preTransferIndex : Nat = 0;
 
+    private let _userIndexActor = actor (Principal.toText(initArgs.userIndexCid)) : Types.IUserIndex;
+
     system func preupgrade() {
         _userInfoList := Iter.toArray(_userInfoMap.entries());
         _stakingRecords := Buffer.toArray(_stakingRecordBuffer);
@@ -89,8 +91,10 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
 
     public shared (msg) func stop() : async Result.Result<Types.PublicStakingPoolInfo, Text> {
         _checkAdminPermission(msg.caller);
-
-        _bonusEndTime := _getTime();
+        let now = _getTime();
+        if (_bonusEndTime > now) {
+            _bonusEndTime := now;
+        };
         Timer.cancelTimer(_updateTokenInfoId);
         return _getPoolInfo();
     };
@@ -98,15 +102,17 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
     public shared (msg) func updateStakingPool(params : Types.UpdateStakingPool) : async Result.Result<Types.PublicStakingPoolInfo, Text> {
         _checkAdminPermission(msg.caller);
 
-        if (_bonusEndTime <= _getTime()) {
+        let now = _getTime();
+        if (_bonusEndTime <= now) {
             Timer.cancelTimer(_updateTokenInfoId);
         };
-
+        let _harvestAmount = _harvest(Principal.fromText("aaaaa-aa"));
+        
         _startTime := params.startTime;
         _bonusEndTime := params.bonusEndTime;
         _rewardPerTime := params.rewardPerTime;
 
-        if (_bonusEndTime > _getTime()) {
+        if (_bonusEndTime > now) {
             _updateTokenInfoId := Timer.recurringTimer<system>(#seconds(600), _updateTokenInfo);
         };
         return _getPoolInfo();
@@ -160,6 +166,8 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
                 _arithmeticFactor,
             );
             _userInfoMap.put(userPrincipal, userInfo);
+            let publicUserInfo = _convert2PubUserInfo(userPrincipal, userInfo, 0);
+            ignore _userIndexActor.updateUser(userPrincipal, publicUserInfo);
         };
         _liquidationStatus := #liquidation;
         return #ok("Settle successfully");
@@ -249,12 +257,16 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
                             var userInfo = _getUserInfo(userPrincipal);
                             userInfo.stakeTokenBalance := Nat.add(userInfo.stakeTokenBalance, record.amount);
                             _userInfoMap.put(userPrincipal, userInfo);
+                            let publicUserInfo = _convert2PubUserInfo(userPrincipal, userInfo, _pendingReward(userPrincipal));
+                            ignore _userIndexActor.updateUser(userPrincipal, publicUserInfo);
                         };
                     } else {
                         if (rollback) {
                             var userInfo = _getUserInfo(userPrincipal);
                             userInfo.rewardTokenBalance := Nat.add(userInfo.rewardTokenBalance, record.amount);
                             _userInfoMap.put(userPrincipal, userInfo);
+                            let publicUserInfo = _convert2PubUserInfo(userPrincipal, userInfo, _pendingReward(userPrincipal));
+                            ignore _userIndexActor.updateUser(userPrincipal, publicUserInfo);
                         };
                     };
                     _removePreTransfer(index);
@@ -363,6 +375,9 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
                     userInfo.stakeTokenBalance := Nat.add(userInfo.stakeTokenBalance, depositAmount);
                     _userInfoMap.put(msg.caller, userInfo);
                     _postTransferComplete(index);
+
+                    let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo, _pendingReward(msg.caller));
+                    ignore _userIndexActor.updateUser(msg.caller, publicUserInfo);
                     return #ok("Deposit successfully");
                 };
                 case (#Err(message)) {
@@ -429,6 +444,9 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
                     userInfo.stakeTokenBalance := Nat.add(userInfo.stakeTokenBalance, depositAmount);
                     _userInfoMap.put(msg.caller, userInfo);
                     _postTransferComplete(index);
+
+                    let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo, _pendingReward(msg.caller));
+                    ignore _userIndexActor.updateUser(msg.caller, publicUserInfo);
                     return #ok("Deposit successfully");
                 };
                 case (#Err(message)) {
@@ -496,6 +514,8 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
         );
         userInfo.lastStakeTime := nowTime;
         _userInfoMap.put(msg.caller, userInfo);
+        let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo, _pendingReward(msg.caller));
+        ignore _userIndexActor.updateUser(msg.caller, publicUserInfo);
         return #ok(harvestAmount);
     };
 
@@ -544,12 +564,17 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
         );
         _userInfoMap.put(msg.caller, userInfo);
 
+        let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo, _pendingReward(msg.caller));
+        ignore _userIndexActor.updateUser(msg.caller, publicUserInfo);
         return #ok(harvestAmount);
     };
 
     public shared (msg) func harvest() : async Result.Result<Nat, Text> {
         try {
             let harvestAmount = _harvest(msg.caller);
+            var userInfo : Types.UserInfo = _getUserInfo(msg.caller);
+            let publicUserInfo = _convert2PubUserInfo(msg.caller, userInfo, _pendingReward(msg.caller));
+            ignore _userIndexActor.updateUser(msg.caller, publicUserInfo);
             return #ok(harvestAmount);
         } catch (e) {
             return #err("Harvest throw exception: " #debug_show (Error.message(e)));
@@ -893,8 +918,11 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
         let index = _preTransfer(record);
         _userInfoMap.put(to, userInfo);
 
+        let publicUserInfo = _convert2PubUserInfo(to, userInfo, _pendingReward(to));
+        ignore _userIndexActor.updateUser(to, publicUserInfo);
+
         try {
-            
+
             switch (await tokenAdapter.transfer({ from = { owner = Principal.fromActor(this); subaccount = null }; from_subaccount = null; to = { owner = to; subaccount = null }; fee = null; amount = withdrawAmount; memo = Option.make(Types.natToBlob(index)); created_at_time = null })) {
                 case (#Ok(txIndex)) {
                     _postTransferComplete(index);
@@ -1034,6 +1062,19 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
 
     private func _getTime() : Nat {
         return Nat64.toNat(Int64.toNat64(Int64.fromInt(Time.now() / 1000000000)));
+    };
+
+    private func _convert2PubUserInfo(userPrincipal : Principal, userInfo : Types.UserInfo, pendingReward : Nat) : Types.PublicUserInfo {
+        let publicUserInfo = {
+            stakeTokenBalance = userInfo.stakeTokenBalance;
+            rewardTokenBalance = userInfo.rewardTokenBalance;
+            stakeAmount = userInfo.stakeAmount;
+            rewardDebt = userInfo.rewardDebt;
+            pendingReward = pendingReward;
+            lastRewardTime = userInfo.lastRewardTime;
+            lastStakeTime = userInfo.lastStakeTime;
+        };
+        return publicUserInfo;
     };
 
     private stable var _admins : [Principal] = [initMsg.caller];
