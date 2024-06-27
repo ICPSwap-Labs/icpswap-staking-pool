@@ -106,8 +106,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
         if (_bonusEndTime <= now) {
             Timer.cancelTimer(_updateTokenInfoId);
         };
-        let _harvestAmount = _harvest(Principal.fromText("aaaaa-aa"));
-        _lastRewardTime := now;
+        _updatePool();
         _startTime := params.startTime;
         _bonusEndTime := params.bonusEndTime;
         _rewardPerTime := params.rewardPerTime;
@@ -520,6 +519,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
     };
 
     public shared (msg) func unstake(amount : Nat) : async Result.Result<Nat, Text> {
+        if (Principal.isAnonymous(msg.caller)) return #err("Illegal anonymous call");
         var userInfo : Types.UserInfo = _getUserInfo(msg.caller);
         var unstakeAmount = if (amount > userInfo.stakeAmount) {
             userInfo.stakeAmount;
@@ -570,6 +570,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
     };
 
     public shared (msg) func harvest() : async Result.Result<Nat, Text> {
+        if (Principal.isAnonymous(msg.caller)) return #err("Illegal anonymous call");
         try {
             let harvestAmount = _harvest(msg.caller);
             var userInfo : Types.UserInfo = _getUserInfo(msg.caller);
@@ -582,6 +583,7 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
     };
 
     public shared (msg) func withdraw(isStakeToken : Bool, amount : Nat) : async Result.Result<Text, Text> {
+        if (Principal.isAnonymous(msg.caller)) return #err("Illegal anonymous call");
         try {
             return await _withdraw(msg.caller, isStakeToken, amount);
         } catch (e) {
@@ -947,13 +949,11 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
             return 0;
         };
         //update pool info
-        var nowTime = _getTime();
-        if (nowTime <= _lastRewardTime) { return 0 };
-        _lastRewardTime := nowTime;
         _totalHarvest += Float.div(_natToFloat(rewardAmount), Float.pow(10, _natToFloat(_rewardTokenDecimals)));
         _rewardDebt := _rewardDebt + rewardAmount;
 
         //update user info
+        var nowTime = _getTime();
         var userInfo : Types.UserInfo = _getUserInfo(caller);
         userInfo.rewardTokenBalance := Nat.add(userInfo.rewardTokenBalance, rewardAmount);
         userInfo.rewardDebt := Nat.div(Nat.mul(userInfo.stakeAmount, _accPerShare), _arithmeticFactor);
@@ -984,13 +984,8 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
     };
 
     private func _pendingReward(user : Principal) : Nat {
-        var nowTime = _getTime();
+        _updatePool();
         var userInfo : Types.UserInfo = _getUserInfo(user);
-        if (nowTime > _lastRewardTime and _totalDeposit != 0) {
-            var rewardInterval : Nat = _getRewardInterval(nowTime);
-            var reward : Nat = Nat.mul(rewardInterval, _rewardPerTime);
-            _accPerShare := Nat.add(_accPerShare, Nat.div(Nat.mul(reward, _arithmeticFactor), _totalDeposit));
-        };
         var rewardAmount = Nat.sub(Nat.div(Nat.mul(userInfo.stakeAmount, _accPerShare), _arithmeticFactor), userInfo.rewardDebt);
         let rewardFee : Nat = Nat.div(Nat.mul(rewardAmount, initArgs.rewardFee), 1000);
         if (rewardFee > 0) {
@@ -1001,6 +996,18 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
         };
 
         return rewardAmount;
+    };
+
+    private func _updatePool() : () {
+        var nowTime = _getTime();
+        if (nowTime > _lastRewardTime) {
+            if (_totalDeposit > 0) {
+                var rewardInterval : Nat = _getRewardInterval(nowTime);
+                var reward : Nat = Nat.mul(rewardInterval, _rewardPerTime);
+                _accPerShare := Nat.add(_accPerShare, Nat.div(Nat.mul(reward, _arithmeticFactor), _totalDeposit));
+            };
+            _lastRewardTime := nowTime;
+        };
     };
 
     private func _getRewardInterval(nowTime : Nat) : Nat {
