@@ -990,9 +990,8 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
         let rewardFee : Nat = Nat.div(Nat.mul(rewardAmount, initArgs.rewardFee), 1000);
         if (rewardFee > 0) {
             rewardAmount := rewardAmount - rewardFee;
-        };
-        if (rewardAmount > 0 and rewardFee > 0 and rewardAmount >= _rewardTokenFee) {
             _totalRewardFee += rewardFee;
+        
         };
 
         return rewardAmount;
