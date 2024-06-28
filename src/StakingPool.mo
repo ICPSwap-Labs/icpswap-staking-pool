@@ -991,7 +991,6 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
         if (rewardFee > 0) {
             rewardAmount := rewardAmount - rewardFee;
             _totalRewardFee += rewardFee;
-        
         };
 
         return rewardAmount;
