@@ -16,6 +16,7 @@ import Buffer "mo:base/Buffer";
 import HashMap "mo:base/HashMap";
 import Principal "mo:base/Principal";
 import Cycles "mo:base/ExperimentalCycles";
+import List "mo:base/List";
 
 import IC0 "mo:commons/utils/IC0Utils";
 import ListUtil "mo:commons/utils/ListUtils";
@@ -307,6 +308,48 @@ shared (initMsg) actor class StakingPoolFactory(
 
     public query func getOperationInfo() : async Result.Result<(Text, Text, Nat, Nat, Bool), Text> {
         return #ok(_updateGlobalDataErrorMsg, _syncStakerErrorMsg, _timeToUpdateGlobalData, _timeToSyncStaker, _updateStakingPoolsGlobalDataState);
+    };
+
+    public shared (msg) func setStakingPoolAdmins(stakingPoolCid : Principal, admins : [Principal]) : async () {
+        _checkPermission(msg.caller);
+        var stakingPoolAct = actor (Principal.toText(stakingPoolCid)) : Types.IStakingPool;
+        await stakingPoolAct.setAdmins(admins);
+    };
+
+    private let IC = actor "aaaaa-aa" : actor {
+        update_settings : { canister_id : Principal; settings : { controllers : [Principal]; } } -> ();
+    };
+
+    public shared (msg) func addStakingPoolControllers(stakingPoolCid : Principal, controllers : [Principal]) : async () {
+        _checkPermission(msg.caller);
+        let { settings } = await IC0.canister_status(stakingPoolCid);
+        var controllerList = List.append(List.fromArray(settings.controllers), List.fromArray(controllers));
+        IC.update_settings({ canister_id = stakingPoolCid; settings = { controllers = List.toArray(controllerList) }; });
+    };
+
+    public shared (msg) func removeStakingPoolControllers(stakingPoolCid : Principal, controllers : [Principal]) : async () {
+        _checkPermission(msg.caller);
+        if (_hasFactory(controllers)){
+            throw Error.reject("StakingPoolFactory must be the controller of StakingPool.");
+        };
+        let { settings } = await IC0.canister_status(stakingPoolCid);
+        let buffer: Buffer.Buffer<Principal> = Buffer.Buffer<Principal>(0);
+        for (it in settings.controllers.vals()) {
+            if (not CollectionUtils.arrayContains<Principal>(controllers, it, Principal.equal)) {
+                buffer.add(it);
+            };
+        };
+        IC.update_settings({ canister_id = stakingPoolCid; settings = { controllers = Buffer.toArray<Principal>(buffer) }; });
+    };
+
+    private func _hasFactory(controllers : [Principal]) : Bool {
+        let controllerCid : Principal = Principal.fromActor(this);
+        for (it in controllers.vals()) {
+            if (Principal.equal(it, controllerCid)) {
+                return true;
+            };
+        };
+        false;
     };
 
     private func _initParamToStakingPoolInfo(params : Types.InitRequest, caller : Principal, stakingPoolCanister : Principal) : Types.StakingPoolInfo {

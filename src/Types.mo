@@ -262,6 +262,7 @@ module {
     public type IStakingPool = actor {
         updateStakingPool : shared UpdateStakingPool -> async Result.Result<PublicStakingPoolInfo, Text>;
         stop : shared () -> async Result.Result<PublicStakingPoolInfo, Text>;
+        setAdmins : shared (admins : [Principal]) -> async ();
 
         unclaimdRewardFee : query () -> async Result.Result<Nat, Text>;
         withdrawRewardFee : shared () -> async Result.Result<Text, Text>;
@@ -283,6 +284,7 @@ module {
     public type IStakingPoolFactory = actor {
         findStakingPoolPage : shared query (state : ?Nat, offset : Nat, limit : Nat) -> async Result.Result<Page<StakingPoolInfo>, Page<StakingPoolInfo>>;
         getStakingPool : shared query (poolCanisterId : Principal) -> async Result.Result<StakingPoolInfo, Text>;
+        getCycleInfo : shared query () -> async Result.Result<CycleInfo, Error>;
     };
 
     public type IUserIndex = actor {
