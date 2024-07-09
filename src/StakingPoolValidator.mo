@@ -12,7 +12,7 @@ import SafeUint "mo:commons/math/SafeUint";
 import TokenFactory "mo:token-adapter/TokenFactory";
 import Types "./Types";
 
-shared (initMsg) actor class StakingPoolFactoryValidator(
+shared (initMsg) actor class StakingPoolValidator(
     stakingPoolFactoryCid : Principal,
     governanceCid : Principal,
 ) = this {

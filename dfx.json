@@ -12,10 +12,9 @@
             "main": "./src/UserIndex.mo",
             "type": "motoko"
         },
-        "TestTokenA": {
-            "wasm": "./test/icrc2/icrc2.wasm",
-            "type": "custom",
-            "candid": "./test/icrc2/icrc2.did"
+        "StakingPoolValidator":{
+            "main": "./src/StakingPoolValidator.mo",
+            "type": "motoko"
         }
     },
     "defaults": {
