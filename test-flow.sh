@@ -18,6 +18,7 @@ deploy(){
   deploy_feeReceiver
   deploy_factory
   deploy_index
+  deploy_validator
   deploy_TestToken
   deploy_stakingPool
   
@@ -44,6 +45,12 @@ deploy_index(){
     dfx deploy --network=$env UserIndex --argument "(principal \"$stakingPoolFactoryCid\")"
     userIndexCid=$(dfx canister --network=$env id UserIndex)
     dfx canister --network=$env call StakingPoolFactory setUserIndexCanister "(principal \"$userIndexCid\")"
+}
+
+deploy_validator(){
+      echo "==> install StakingPoolValidator"
+      stakingPoolFactoryCid=$(dfx canister --network=$env id StakingPoolFactory)
+      dfx deploy --network=$env StakingPoolValidator --argument "(principal \"$stakingPoolFactoryCid\",principal \"$governanceCid\")"
 }
 
 deploy_TestToken(){

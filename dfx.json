@@ -1,18 +1,22 @@
 {
     "canisters": {
-        "StakingFeeReceiver": {
-            "main": "./src/StakingFeeReceiver.mo",
-            "type": "motoko"
-        },
         "StakingPoolFactory": {
             "main": "./src/StakingPoolFactory.mo",
             "type": "motoko"
         },
-        "UserIndex":{
-            "main": "./src/UserIndex.mo",
+        "StakingPool": {
+            "main": "./src/StakingPool.mo",
             "type": "motoko"
         },
-        "StakingPoolValidator":{
+        "StakingFeeReceiver": {
+            "main": "./src/StakingFeeReceiver.mo",
+            "type": "motoko"
+        },
+        "StakingPoolIndex": {
+            "main": "./src/StakingPoolIndex.mo",
+            "type": "motoko"
+        },
+        "StakingPoolValidator": {
             "main": "./src/StakingPoolValidator.mo",
             "type": "motoko"
         }

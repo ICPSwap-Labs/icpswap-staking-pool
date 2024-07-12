@@ -263,6 +263,11 @@ module {
         updateStakingPool : shared UpdateStakingPool -> async Result.Result<PublicStakingPoolInfo, Text>;
         stop : shared () -> async Result.Result<PublicStakingPoolInfo, Text>;
         setAdmins : shared (admins : [Principal]) -> async ();
+        liquidation : shared () -> async Result.Result<Text, Text>;
+        refundUserToken : shared () -> async Result.Result<Text, Text>;
+        refundRewardToken : shared () -> async Result.Result<Text, Text>;
+        findTransferRecord : query () -> async Result.Result<[(Nat, Record)], Error>;
+        removeTransferRecord : shared (index : Nat, rollback : Bool) -> async Result.Result<Bool, Text>;
 
         unclaimdRewardFee : query () -> async Result.Result<Nat, Text>;
         withdrawRewardFee : shared () -> async Result.Result<Text, Text>;

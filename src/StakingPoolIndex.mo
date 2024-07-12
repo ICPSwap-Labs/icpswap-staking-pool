@@ -17,7 +17,7 @@ import Iter "mo:base/Iter";
 import CollectionUtils "mo:commons/utils/CollectionUtils";
 import Types "./Types";
 
-shared (initMsg) actor class UserIndex(factoryId : Principal) = this {
+shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
 
     public type UserPool = {
         stakingPool : Principal;
