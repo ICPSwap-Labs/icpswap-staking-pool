@@ -23,8 +23,8 @@ cat <<< $(jq '.canisters={
     "main": "./src/StakingPoolIndex.mo",
     "type": "motoko"
   },
-  "StakingPoolValidator": {
-    "main": "./src/StakingPoolValidator.mo",
+  "StakingPoolFactoryValidator": {
+    "main": "./src/StakingPoolFactoryValidator.mo",
     "type": "motoko"
   }
 }' dfx.json) > dfx.json

@@ -1110,6 +1110,6 @@ shared (initMsg) actor class StakingPool(initArgs : Types.InitRequests) : async 
 
     var _updateTokenInfoId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(600), _updateTokenInfo);
 
-    private var _version : Text = "1.0.0";
+    private var _version : Text = "1.0.1";
     public query func getVersion() : async Text { _version };
 };

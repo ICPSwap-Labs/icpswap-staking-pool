@@ -24,7 +24,7 @@ This actor is responsible for the management of pledge fees and is mainly divide
 
 This actor is responsible for gathering information about the staking pools in which users participate, enabling easier querying of all staking pools a user is involved in, thereby enhancing the user's interactive experience.
 
-**StakingPoolValidator**
+**StakingPoolFactoryValidator**
 
 This actor is responsible for validating parameters and authorization during critical function calls in specific scenarios, ensuring the smooth operation of the staking pool.
 
@@ -42,7 +42,7 @@ The script will deploy the following actors:
 - StakingFeeReceiver
 - StakingPoolFactory
 - StakingPoolIndex
-- StakingPoolValidator
+- StakingPoolFactoryValidator
 - TestToken
 
 After the deployment, the test script will run the following steps:
@@ -50,7 +50,7 @@ After the deployment, the test script will run the following steps:
 1. Deploy the canister of StakingFeeReceiver actor
 2. Deploy the canister of StakingPoolFactory actor
 3. Deploy the canister of StakingPoolIndex actor
-4. Deploy the canister of StakingPoolValidator actor
+4. Deploy the canister of StakingPoolFactoryValidator actor
 5. Call the *createStakingPool* function from *StakingPoolFactory* canister to create a new staking pool
 6. Call the *icrc1_transfer* function from *TestToken* canister to transfer reward tokens to the staking pool
 7. Call the *icrc2_approve* function from *TestToken* canister to approve the staking pool to spend the stake tokens

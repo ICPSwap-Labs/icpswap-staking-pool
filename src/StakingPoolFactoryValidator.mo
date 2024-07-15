@@ -12,7 +12,7 @@ import SafeUint "mo:commons/math/SafeUint";
 import TokenFactory "mo:token-adapter/TokenFactory";
 import Types "./Types";
 
-shared (initMsg) actor class StakingPoolValidator(
+shared (initMsg) actor class StakingPoolFactoryValidator(
     stakingPoolFactoryCid : Principal,
     governanceCid : Principal,
 ) = this {
@@ -34,7 +34,7 @@ shared (initMsg) actor class StakingPoolValidator(
 
     private var _stakingPoolFactoryAct = actor (Principal.toText(stakingPoolFactoryCid)) : Types.IStakingPoolFactory;
 
-    public shared (msg) func createValidate(args : Types.InitRequest) : async Result {
+    public shared (msg) func createStakingPoolValidate(args : Types.InitRequest) : async Result {
         assert (Principal.equal(msg.caller, governanceCid));
 
         var nowTime = _getTime();
@@ -139,7 +139,7 @@ shared (initMsg) actor class StakingPoolValidator(
     };
 
     // --------------------------- Version Control ------------------------------------
-    private var _version : Text = "1.0.0";
+    private var _version : Text = "1.0.1";
     public query func getVersion() : async Text { _version };
 
     private func _getTime() : Nat {

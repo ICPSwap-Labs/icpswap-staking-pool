@@ -84,7 +84,7 @@ shared (initMsg) actor class StakingFeeReceiver() = this {
     };
 
     // --------------------------- Version Control ------------------------------------
-    private var _version : Text = "3.0.0";
+    private var _version : Text = "1.0.1";
     public query func getVersion() : async Text { _version };
 
     system func preupgrade() {};

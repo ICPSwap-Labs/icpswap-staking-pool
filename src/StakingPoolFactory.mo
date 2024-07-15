@@ -556,6 +556,6 @@ shared (initMsg) actor class StakingPoolFactory(
     };
 
     let _updateStakingPoolsGlobalDataId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(600), _updateStakingPoolsGlobalData);
-    private var _version : Text = "1.0.0";
+    private var _version : Text = "1.0.1";
     public query func getVersion() : async Text { _version };
 };

@@ -40,17 +40,17 @@ deploy_factory(){
 }
 
 deploy_index(){
-    echo "==> install UserIndex"
+    echo "==> install StakingPoolIndex"
     stakingPoolFactoryCid=$(dfx canister --network=$env id StakingPoolFactory)
-    dfx deploy --network=$env UserIndex --argument "(principal \"$stakingPoolFactoryCid\")"
-    userIndexCid=$(dfx canister --network=$env id UserIndex)
-    dfx canister --network=$env call StakingPoolFactory setUserIndexCanister "(principal \"$userIndexCid\")"
+    dfx deploy --network=$env StakingPoolIndex --argument "(principal \"$stakingPoolFactoryCid\")"
+    indexCid=$(dfx canister --network=$env id StakingPoolIndex)
+    dfx canister --network=$env call StakingPoolFactory setUserIndexCanister "(principal \"$indexCid\")"
 }
 
 deploy_validator(){
-      echo "==> install StakingPoolValidator"
+      echo "==> install StakingPoolFactoryValidator"
       stakingPoolFactoryCid=$(dfx canister --network=$env id StakingPoolFactory)
-      dfx deploy --network=$env StakingPoolValidator --argument "(principal \"$stakingPoolFactoryCid\",principal \"$governanceCid\")"
+      dfx deploy --network=$env StakingPoolFactoryValidator --argument "(principal \"$stakingPoolFactoryCid\",principal \"$governanceCid\")"
 }
 
 deploy_TestToken(){
