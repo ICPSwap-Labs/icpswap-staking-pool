@@ -332,7 +332,7 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
     };
 
     // --------------------------- Version Control ------------------------------------
-    private var _version : Text = "1.0.1";
+    private var _version : Text = "1.0.2";
     public query func getVersion() : async Text { _version };
 
     var _syncStakingPoolId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(60), _syncStakingPool);
