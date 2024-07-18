@@ -36,8 +36,11 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
         Principal.equal(a.stakingPool, b.stakingPool);
     };
 
+    private stable var _syncStakingPoolTime = 0;
+    private stable var _computeStakingPoolTime = 0;
+
     private stable var _pools : [(Principal, Types.StakingPoolInfo)] = [];
-    private var _poolMap : HashMap.HashMap<Principal, Types.StakingPoolInfo> = HashMap.HashMap<Principal, Types.StakingPoolInfo>(0, Principal.equal, Principal.hash);
+    private var _poolMap = HashMap.fromIter<Principal, Types.StakingPoolInfo>(_pools.vals(), 10, Principal.equal, Principal.hash);
 
     private stable var _users : [(Principal, [UserPool])] = [];
     private var _userMap : HashMap.HashMap<Principal, Buffer.Buffer<UserPool>> = HashMap.HashMap<Principal, Buffer.Buffer<UserPool>>(0, Principal.equal, Principal.hash);
@@ -127,6 +130,39 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
         });
     };
 
+    public query func queryStakingPool(offset : Nat, limit : Nat) : async Result.Result<Types.Page<Types.StakingPoolInfo>, Text> {
+        let buffer = Buffer.Buffer<Types.StakingPoolInfo>(10);
+        for ((canister, pool) in _poolMap.entries()) {
+            buffer.add(pool);
+        };
+        if (buffer.size() > 0) {
+            return #ok({
+                totalElements = buffer.size();
+                content = CollectionUtils.arrayRange<Types.StakingPoolInfo>(Buffer.toArray(buffer), offset, limit);
+                offset = offset;
+                limit = limit;
+            });
+        } else {
+            return #err("No staking pool");
+        };
+    };
+
+    public query func queryIndexInfo() : async Result.Result<(Nat, Nat, Principal), Text> {
+        return #ok(_syncStakingPoolTime, _computeStakingPoolTime, factoryId);
+    };
+
+    public shared (msg) func syncStakingPool() : async Result.Result<Nat, Text> {
+        _checkPermission(msg.caller);
+        await _syncStakingPool();
+        return #ok(_poolMap.size());
+    };
+
+    public shared (msg) func computeStakingPool() : async Result.Result<Nat, Text> {
+        _checkPermission(msg.caller);
+        await _computeStakingPool();
+        return #ok(_poolMap.size());
+    };
+
     public query func queryAPR(pool : Principal, beginTime : Nat, endTime : Nat) : async Result.Result<[Types.APRInfo], Text> {
         let buffer = Buffer.Buffer<Types.APRInfo>(10);
         switch (_aprMap.get(pool)) {
@@ -214,6 +250,7 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
                 for (stakingPool in page.content.vals()) {
                     _poolMap.put(stakingPool.canisterId, stakingPool);
                 };
+                _syncStakingPoolTime := _getTime();
             };
             case (#err(err)) {
 
@@ -223,6 +260,7 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
 
     private func _computeStakingPool() : async () {
         let now = _getTime();
+        _computeStakingPoolTime := now;
         var tokenPrice = TokenPriceHelper.TokenPrice(null);
         await tokenPrice.syncToken2ICPPrice();
         for ((key, stakingPool) in _poolMap.entries()) {
