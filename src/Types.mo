@@ -259,6 +259,19 @@ module {
         rewardPerTime : Nat;
     };
 
+    public type APRInfo = {
+        stakingPool : Principal;
+        time : Nat;
+        day : Nat;
+        apr : Float;
+        rewardPerTime : Nat;
+        stakingTokenAmount : Float;
+        rewardTokenDecimals : Nat;
+        stakingTokenDecimals : Nat;
+        rewardTokenPriceUSD : Float;
+        stakingTokenPriceUSD : Float;
+    };
+
     public type IStakingPool = actor {
         updateStakingPool : shared UpdateStakingPool -> async Result.Result<PublicStakingPoolInfo, Text>;
         stop : shared () -> async Result.Result<PublicStakingPoolInfo, Text>;

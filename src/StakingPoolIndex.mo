@@ -14,8 +14,11 @@ import Buffer "mo:base/Buffer";
 import Option "mo:base/Option";
 import Bool "mo:base/Bool";
 import Iter "mo:base/Iter";
+import Float "mo:base/Float";
 import CollectionUtils "mo:commons/utils/CollectionUtils";
+import IntUtils "mo:commons/math/SafeInt/IntUtils";
 import Types "./Types";
+import TokenPriceHelper "TokenPriceHelper";
 
 shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
 
@@ -27,6 +30,8 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
         userInfo : Types.PublicUserInfo;
     };
 
+    public type APRInfo = Types.APRInfo;
+
     private func _userPoolEqual(a : UserPool, b : UserPool) : Bool {
         Principal.equal(a.stakingPool, b.stakingPool);
     };
@@ -37,6 +42,9 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
     private stable var _users : [(Principal, [UserPool])] = [];
     private var _userMap : HashMap.HashMap<Principal, Buffer.Buffer<UserPool>> = HashMap.HashMap<Principal, Buffer.Buffer<UserPool>>(0, Principal.equal, Principal.hash);
 
+    private stable var _aprs : [(Principal, [Types.APRInfo])] = [];
+    private var _aprMap : HashMap.HashMap<Principal, Buffer.Buffer<Types.APRInfo>> = HashMap.HashMap<Principal, Buffer.Buffer<Types.APRInfo>>(0, Principal.equal, Principal.hash);
+
     system func preupgrade() {
         _pools := Iter.toArray(_poolMap.entries());
         let buffer = Buffer.Buffer<(Principal, [UserPool])>(_userMap.size());
@@ -44,6 +52,11 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
             buffer.add((key, Buffer.toArray(value)));
         };
         _users := Buffer.toArray(buffer);
+        let aprBuffer = Buffer.Buffer<(Principal, [Types.APRInfo])>(_aprMap.size());
+        for ((key, value) in _aprMap.entries()) {
+            aprBuffer.add((key, Buffer.toArray(value)));
+        };
+        _aprs := Buffer.toArray(aprBuffer);
     };
     system func postupgrade() {
         _pools := [];
@@ -51,11 +64,15 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
             _userMap.put(key, Buffer.fromArray<UserPool>(value));
         };
         _users := [];
+        for ((key, value) in _aprs.vals()) {
+            _aprMap.put(key, Buffer.fromArray<Types.APRInfo>(value));
+        };
+        _aprs := [];
     };
 
     public query func queryPool(user : Principal, offset : Nat, limit : Nat, stakingToken : ?Text, rewardToken : ?Text) : async Result.Result<Types.Page<UserPool>, Types.Page<UserPool>> {
         let buffer = Buffer.Buffer<UserPool>(10);
-
+        let now = _getTime();
         switch (_userMap.get(user)) {
             case (?userBuffer) {
                 for (userPool in userBuffer.vals()) {
@@ -81,7 +98,14 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
                         };
                     };
                     if (addBuffer) {
-                        buffer.add(userPool);
+                        switch (_poolMap.get(userPool.stakingPool)) {
+                            case (?pool) {
+                                if (pool.startTime <= now and pool.bonusEndTime >= now) {
+                                    buffer.add(userPool);
+                                };
+                            };
+                            case (_) {};
+                        };
                     };
                 };
             };
@@ -101,6 +125,25 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
             offset = offset;
             limit = limit;
         });
+    };
+
+    public query func queryAPR(pool : Principal, beginTime : Nat, endTime : Nat) : async Result.Result<[Types.APRInfo], Text> {
+        let buffer = Buffer.Buffer<Types.APRInfo>(10);
+        switch (_aprMap.get(pool)) {
+            case (?aprBuffer) {
+                for (aprInfo in aprBuffer.vals()) {
+                    var addBuffer = false;
+                    if (aprInfo.time >= beginTime and aprInfo.time <= endTime) {
+                        addBuffer := true;
+                    };
+                    if (addBuffer) {
+                        buffer.add(aprInfo);
+                    };
+                };
+            };
+            case (_) {};
+        };
+        return #ok(Buffer.toArray(buffer));
     };
 
     public shared ({ caller }) func updateUser(userPrincipal : Principal, userInfo : Types.PublicUserInfo) : async Result.Result<Bool, Text> {
@@ -178,6 +221,65 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
         };
     };
 
+    private func _computeStakingPool() : async () {
+        let now = _getTime();
+        var tokenPrice = TokenPriceHelper.TokenPrice(null);
+        await tokenPrice.syncToken2ICPPrice();
+        for ((key, stakingPool) in _poolMap.entries()) {
+            if (stakingPool.startTime <= now and stakingPool.bonusEndTime > now) {
+                let stakingPoolActor = actor (Principal.toText(key)) : Types.IStakingPool;
+                let result = await stakingPoolActor.getPoolInfo();
+                switch (result) {
+                    case (#ok(stakingPoolInfo)) {
+                        let rewardPerTime = stakingPoolInfo.rewardPerTime;
+                        let stakingTokenAmount = Float.sub(stakingPoolInfo.totalStaked, stakingPoolInfo.totalUnstaked);
+                        let rewardTokenPriceUSD = tokenPrice.getToken2USDPrice(stakingPoolInfo.rewardToken.address);
+                        let stakingTokenPriceUSD = tokenPrice.getToken2USDPrice(stakingPoolInfo.stakingToken.address);
+                        //APR=(rewardPerTime*rewardTokenPriceUSD)/(stakingTokenAmount*stakingTokenPriceUSD)*3600*24*360*100%
+                        let rewardValuePerTime : Float = Float.mul(
+                            Float.mul(
+                                Float.fromInt(IntUtils.toInt(rewardPerTime, 256)),
+                                Float.fromInt(IntUtils.toInt(Nat.pow(10, stakingPool.rewardTokenDecimals), 256)),
+                            ),
+                            rewardTokenPriceUSD,
+                        );
+                        let stakingValue : Float = Float.mul(stakingTokenAmount, stakingTokenPriceUSD);
+                        var apr : Float = 0;
+                        if (Float.greater(stakingValue, 0)) {
+                            apr := Float.mul(Float.mul(Float.div(rewardValuePerTime, stakingValue), Float.fromInt(3600 * 24)), Float.fromInt(360));
+                        };
+                        let aprInfo : Types.APRInfo = {
+                            stakingPool = key;
+                            time = now;
+                            day = Nat.add(Nat.div(now, 86400), 1);
+                            apr = apr;
+                            rewardPerTime = rewardPerTime;
+                            stakingTokenAmount = stakingTokenAmount;
+                            rewardTokenDecimals = stakingPoolInfo.rewardTokenDecimals;
+                            stakingTokenDecimals = stakingPoolInfo.stakingTokenDecimals;
+                            rewardTokenPriceUSD = rewardTokenPriceUSD;
+                            stakingTokenPriceUSD = stakingTokenPriceUSD;
+                        };
+                        switch (_aprMap.get(key)) {
+                            case (?buffer) {
+                                buffer.add(aprInfo);
+                                _aprMap.put(key, buffer);
+                            };
+                            case (_) {
+                                let buffer = Buffer.Buffer<Types.APRInfo>(1);
+                                buffer.add(aprInfo);
+                                _aprMap.put(key, buffer);
+                            };
+                        };
+                    };
+                    case (#err(err)) {
+
+                    };
+                };
+            };
+        };
+    };
+
     private func _getTime() : Nat {
         return Nat64.toNat(Int64.toNat64(Int64.fromInt(Time.now() / 1000000000)));
     };
@@ -190,5 +292,6 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
     private var _version : Text = "1.0.1";
     public query func getVersion() : async Text { _version };
 
-    var _syncUserInfoId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(600), _syncStakingPool);
+    var _syncStakingPoolId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(600), _syncStakingPool);
+    var _computeStakingPoolId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(600), _computeStakingPool);
 };

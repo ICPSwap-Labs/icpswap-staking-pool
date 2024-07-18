@@ -33,6 +33,17 @@ module {
                 };
             };
         };
+
+        public func getToken2USDPrice(address : Text) : Float {
+            switch (tokenPriceMap.get(address)) {
+                case (?price) {
+                    price.priceUSD;
+                };
+                case (_) {
+                    0.0000;
+                };
+            };
+        };
     };
 
     public type TokenPriceInfo = {

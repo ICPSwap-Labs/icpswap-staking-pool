@@ -19,6 +19,11 @@
         "StakingPoolFactoryValidator": {
             "main": "./src/StakingPoolFactoryValidator.mo",
             "type": "motoko"
+        },
+        "TestTokenA": {
+            "wasm": "./test/icrc2/icrc2.wasm",
+            "type": "custom",
+            "candid": "./test/icrc2/icrc2.did"
         }
     },
     "defaults": {
