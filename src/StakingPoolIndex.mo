@@ -103,7 +103,8 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
                     if (addBuffer) {
                         switch (_poolMap.get(userPool.stakingPool)) {
                             case (?pool) {
-                                if (pool.startTime <= now and pool.bonusEndTime >= now) {
+                                if ((pool.startTime <= now and pool.bonusEndTime >= now) or
+                                 (userPool.userInfo.stakeAmount > 0 or userPool.userInfo.rewardTokenBalance > 0 or userPool.userInfo.stakeTokenBalance > 0)) {
                                     buffer.add(userPool);
                                 };
                             };
@@ -247,8 +248,12 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
         let pageResult = await stakingPoolFactory.findStakingPoolPage(null, 0, 1000);
         switch (pageResult) {
             case (#ok(page)) {
+                let _newPoolMap = HashMap.HashMap<Principal, Types.StakingPoolInfo>(page.content.size(), Principal.equal, Principal.hash);
                 for (stakingPool in page.content.vals()) {
-                    _poolMap.put(stakingPool.canisterId, stakingPool);
+                    _newPoolMap.put(stakingPool.canisterId, stakingPool);
+                };
+                if(_newPoolMap.size() > 0){
+                    _poolMap := _newPoolMap;
                 };
                 _syncStakingPoolTime := _getTime();
             };
@@ -330,6 +335,6 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
     private var _version : Text = "1.0.1";
     public query func getVersion() : async Text { _version };
 
-    var _syncStakingPoolId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(600), _syncStakingPool);
+    var _syncStakingPoolId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(60), _syncStakingPool);
     var _computeStakingPoolId : Timer.TimerId = Timer.recurringTimer<system>(#seconds(600), _computeStakingPool);
 };

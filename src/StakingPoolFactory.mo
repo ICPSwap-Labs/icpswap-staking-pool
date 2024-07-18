@@ -264,7 +264,7 @@ shared (initMsg) actor class StakingPoolFactory(
             valueOfStaking = _valueOfStaking;
             valueOfRewardsInProgress = _valueOfRewardsInProgress;
             valueOfRewarded = _valueOfRewarded;
-            totalPools = _stakingPoolStatMap.size();
+            totalPools = _stakingPoolMap.size();
             totalStaker = _totalStaker;
         });
     };
