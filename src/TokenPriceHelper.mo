@@ -3,7 +3,7 @@ import Text "mo:base/Text";
 import Float "mo:base/Float";
 module {
     public class TokenPrice(canister_id : ?Text) {
-        let default_canister_id : Text = "gbytb-qiaaa-aaaag-qck7q-cai";
+        let default_canister_id : Text = "g54jq-hiaaa-aaaag-qck5q-cai";
         let price_canister_id : Text = switch (canister_id) {
             case (?_canister_id) { _canister_id };
             case (null) { default_canister_id };
@@ -14,7 +14,7 @@ module {
         var tokenPriceMap = HashMap.HashMap<Text, TokenPriceInfo>(1, Text.equal, Text.hash);
 
         public func syncToken2ICPPrice() : async () {
-            let tokenPriceArray = await tokenPrice.getTokenPrice();
+            let tokenPriceArray = await tokenPrice.getTokenPriceMetadata();
             tokenPriceMap := HashMap.fromIter(
                 tokenPriceArray.vals(),
                 1,
@@ -55,5 +55,6 @@ module {
 
     public type ITokenPrice = actor {
         getTokenPrice : query () -> async [(Text, TokenPriceInfo)];
+        getTokenPriceMetadata : query () -> async [(Text, TokenPriceInfo)];
     };
 };
