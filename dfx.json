@@ -26,6 +26,7 @@
             "candid": "./test/icrc2/icrc2.did"
         }
     },
+    "dfx": "0.20.0",
     "defaults": {
         "build": {
             "packtool": "vessel sources"
