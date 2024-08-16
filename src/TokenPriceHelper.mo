@@ -37,6 +37,9 @@ module {
         public func getToken2USDPrice(address : Text) : Float {
             switch (tokenPriceMap.get(address)) {
                 case (?price) {
+                    if(price.priceUSD == 0.0){
+                        return price.priceICP * getToken2USDPrice("ryjl3-tyaaa-aaaaa-aaaba-cai");
+                    };
                     price.priceUSD;
                 };
                 case (_) {
