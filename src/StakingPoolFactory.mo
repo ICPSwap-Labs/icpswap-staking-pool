@@ -253,6 +253,77 @@ shared (initMsg) actor class StakingPoolFactory(
         });
     };
 
+    //1.no start,2.ongoing,3.ended
+    public query func findStakingPoolPageV2(state : ?Nat, offset : Nat, limit : Nat, stakingToken : ?Text, rewardToken : ?Text) : async Result.Result<Types.Page<(Types.StakingPoolInfo)>, Types.Page<(Types.StakingPoolInfo)>> {
+        var buffer : Buffer.Buffer<(Types.StakingPoolInfo)> = Buffer.Buffer<(Types.StakingPoolInfo)>(_stakingPoolMap.size());
+        var reqState : Nat = 0;
+        var reqStateCheck : Bool = false;
+        if (not Option.isNull(state)) {
+            reqStateCheck := true;
+            reqState := Option.get(state, 0);
+        };
+        var stakingTokenLedger = "";
+        var rewardTokenLedger = "";
+        switch (stakingToken) {
+            case (?stakingToken) {
+                reqStateCheck := true;
+                stakingTokenLedger := stakingToken;
+            };
+            case (_) {};
+        };
+        switch (rewardToken) {
+            case (?rewardToken) {
+                reqStateCheck := true;
+                rewardTokenLedger := rewardToken;
+            };
+            case (_) {};
+        };
+        let currentTime = _getTime();
+        for ((stakingPoolCanister, stakingPoolInfo) in _stakingPoolMap.entries()) {
+            Debug.print("findStakingPoolPage debug: " # debug_show (stakingPoolInfo));
+            var addBuffer = true;
+            if (reqStateCheck) {
+                if (reqState == 1) {
+                    Debug.print("findStakingPoolPage debug: " # debug_show (reqStateCheck) # " and " # debug_show (reqState));
+                    if (stakingPoolInfo.startTime <= currentTime) {
+                        addBuffer := false;
+                    };
+                } else if (reqState == 2) {
+                    if (stakingPoolInfo.startTime > currentTime or stakingPoolInfo.bonusEndTime <= currentTime) {
+                        addBuffer := false;
+                    };
+                } else if (reqState == 3) {
+                    if (stakingPoolInfo.startTime >= currentTime or stakingPoolInfo.bonusEndTime > currentTime) {
+                        addBuffer := false;
+                    };
+                };
+                if (stakingTokenLedger != "" and not Text.equal(stakingPoolInfo.stakingToken.address, stakingTokenLedger)){
+                    addBuffer := false;
+                };
+                if (rewardTokenLedger != "" and not Text.equal(stakingPoolInfo.rewardToken.address, rewardTokenLedger)) {
+                    addBuffer := false;
+                };
+            };
+            if (addBuffer) {
+                buffer.add(stakingPoolInfo);
+            };
+        };
+        if (buffer.size() > 0) {
+            return #ok({
+                totalElements = buffer.size();
+                content = CollectionUtils.arrayRange<Types.StakingPoolInfo>(Buffer.toArray(buffer), offset, limit);
+                offset = offset;
+                limit = limit;
+            });
+        };
+        return #ok({
+            totalElements = 0;
+            content = [];
+            offset = offset;
+            limit = limit;
+        });
+    };
+
     public query func getGlobalData() : async Result.Result<Types.GlobalDataInfo, Text> {
         var stakingAmount : Float = 0;
         var rewardAmount : Float = 0;

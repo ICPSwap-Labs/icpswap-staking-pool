@@ -75,6 +75,90 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
         _aprs := [];
     };
 
+    public type UserStakedToken = {
+        poolId : Principal;
+        ledgerId : Principal;
+        amount : Float;
+        price : Float;
+        value : Float        
+    };
+
+    public query func queryUserStakedTokens(user : Principal) : async [UserStakedToken] {
+        let buffer = Buffer.Buffer<UserStakedToken>(10);
+        switch(_userMap.get(user)){
+            case(?userPools){
+                for (pool in userPools.vals()){
+                    var decimal = 0;
+                    switch(_poolMap.get(pool.stakingPool)){
+                        case(?stakingPool){
+                            decimal := stakingPool.stakingTokenDecimals;
+                        };
+                        case(_){};
+                    };
+
+                    let usdPrice = tokenPrice.getToken2USDPrice(pool.stakingToken.address);
+                    let stakedAmount : Float = Float.div(
+                        Float.fromInt(IntUtils.toInt(pool.userInfo.stakeAmount, 256)),
+                        Float.fromInt(IntUtils.toInt(Nat.pow(10, decimal), 256)),
+                    );
+                    if(stakedAmount > 0){
+                        buffer.add({
+                            poolId = pool.stakingPool;
+                            ledgerId = Principal.fromText(pool.stakingToken.address);
+                            amount = stakedAmount;
+                            price = usdPrice;
+                            value = Float.mul(usdPrice, stakedAmount);
+                        });
+                    };
+                };
+            };
+            case(_){
+                return [];
+            }
+        };
+        return Buffer.toArray(buffer);
+    };
+
+    public shared(msg) func updateUserStakedTokens(user : Principal) : async Bool {
+        _checkPermission(msg.caller);
+        _userMap.delete(user);
+        for((poolId,pool) in _poolMap.entries()){
+            let _poolActor = actor (Principal.toText(poolId)) : Types.IStakingPool;
+            switch(await _poolActor.getUserInfo(user)){
+                case (#ok(userInfoResult)){
+                    let userInfo =  {
+                        stakingPool = poolId;
+                        stakingToken = pool.stakingToken;
+                        rewardToken = pool.rewardToken;
+                        owner = user;
+                        userInfo = userInfoResult;
+                    };
+                    switch(_userMap.get(user)){
+                        case(?userBuffer){
+                            userBuffer.add(userInfo);
+                            _userMap.put(user, userBuffer);
+                        };
+                        case(_){
+                            let buffer = Buffer.Buffer<UserPool>(1);
+                            buffer.add(userInfo);
+                            _userMap.put(user, buffer);
+                        };
+                    };
+                };
+                case(#err(_message)){
+                    
+                };
+            };
+        };
+        return true;
+    };
+
+    public shared(msg) func deleteStakingPool(pool : Principal) : async Bool {
+        _checkPermission(msg.caller);
+        _poolMap.delete(pool);
+        return true;
+    };
+
     public query func queryPool(user : Principal, offset : Nat, limit : Nat, stakingToken : ?Text, rewardToken : ?Text) : async Result.Result<Types.Page<UserPool>, Types.Page<UserPool>> {
         let buffer = Buffer.Buffer<UserPool>(10);
         let now = _getTime();
