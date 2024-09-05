@@ -238,6 +238,7 @@ shared (initMsg) actor class StakingPoolFactory(
             };
         };
         if (buffer.size() > 0) {
+            buffer.sort(Types._createTimeCompare);
             return #ok({
                 totalElements = buffer.size();
                 content = CollectionUtils.arrayRange<Types.StakingPoolInfo>(Buffer.toArray(buffer), offset, limit);
@@ -309,6 +310,7 @@ shared (initMsg) actor class StakingPoolFactory(
             };
         };
         if (buffer.size() > 0) {
+            buffer.sort(Types._createTimeCompare);
             return #ok({
                 totalElements = buffer.size();
                 content = CollectionUtils.arrayRange<Types.StakingPoolInfo>(Buffer.toArray(buffer), offset, limit);
@@ -493,7 +495,7 @@ shared (initMsg) actor class StakingPoolFactory(
                             startTime := poolInfo.startTime;
                             totalRewardAmount := rewardPerTime * (bonusEndTime - startTime);
                         };
-                        case (#err(code)) {};
+                        case (#err(_code)) {};
                     };
                     var rewardTokenIcpPrice : Float = tokenPrice.getToken2ICPPrice(stakingPool.rewardToken.address);
                     let rewardAmount : Float = Float.div(

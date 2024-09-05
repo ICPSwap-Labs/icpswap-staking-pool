@@ -7,6 +7,7 @@ import Float "mo:base/Float";
 import Blob "mo:base/Blob";
 import Array "mo:base/Array";
 import Nat8 "mo:base/Nat8";
+import Order "mo:base/Order";
 
 module {
 
@@ -215,6 +216,43 @@ module {
         rewardTokenFee : Nat;
         rewardPerTime : Nat;
         creator : Principal;
+    };
+
+    public func _createTimeCompare(x : StakingPoolInfo, y : StakingPoolInfo) : Order.Order{
+        if(x.createTime > y.createTime){
+            #less
+        } else if (x.createTime < y.createTime) {
+            #greater
+        } else {
+            #equal
+        }
+    };
+
+    public type UserPool = {
+        stakingPool : Principal;
+        stakingToken : Token;
+        rewardToken : Token;
+        owner : Principal;
+        userInfo : PublicUserInfo;
+    };
+
+    public type UserPoolInfo = {
+        stakingPool : Principal;
+        poolCreateTime : Nat;
+        stakingToken : Token;
+        rewardToken : Token;
+        owner : Principal;
+        userInfo : PublicUserInfo;
+    };
+
+    public func _poolCreateTimeCompare(x : UserPoolInfo, y : UserPoolInfo) : Order.Order{
+        if(x.poolCreateTime > y.poolCreateTime){
+            #less
+        } else if (x.poolCreateTime < y.poolCreateTime) {
+            #greater
+        } else {
+            #equal
+        }
     };
 
     public type InitRequest = {

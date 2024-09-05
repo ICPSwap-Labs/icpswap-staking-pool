@@ -22,17 +22,9 @@ import TokenPriceHelper "TokenPriceHelper";
 
 shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
 
-    public type UserPool = {
-        stakingPool : Principal;
-        stakingToken : Types.Token;
-        rewardToken : Types.Token;
-        owner : Principal;
-        userInfo : Types.PublicUserInfo;
-    };
-
     public type APRInfo = Types.APRInfo;
 
-    private func _userPoolEqual(a : UserPool, b : UserPool) : Bool {
+    private func _userPoolEqual(a : Types.UserPool, b : Types.UserPool) : Bool {
         Principal.equal(a.stakingPool, b.stakingPool);
     };
 
@@ -44,15 +36,15 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
     private stable var _pools : [(Principal, Types.StakingPoolInfo)] = [];
     private var _poolMap = HashMap.fromIter<Principal, Types.StakingPoolInfo>(_pools.vals(), 10, Principal.equal, Principal.hash);
 
-    private stable var _users : [(Principal, [UserPool])] = [];
-    private var _userMap : HashMap.HashMap<Principal, Buffer.Buffer<UserPool>> = HashMap.HashMap<Principal, Buffer.Buffer<UserPool>>(0, Principal.equal, Principal.hash);
+    private stable var _users : [(Principal, [Types.UserPool])] = [];
+    private var _userMap : HashMap.HashMap<Principal, Buffer.Buffer<Types.UserPool>> = HashMap.HashMap<Principal, Buffer.Buffer<Types.UserPool>>(0, Principal.equal, Principal.hash);
 
     private stable var _aprs : [(Principal, [Types.APRInfo])] = [];
     private var _aprMap : HashMap.HashMap<Principal, Buffer.Buffer<Types.APRInfo>> = HashMap.HashMap<Principal, Buffer.Buffer<Types.APRInfo>>(0, Principal.equal, Principal.hash);
 
     system func preupgrade() {
         _pools := Iter.toArray(_poolMap.entries());
-        let buffer = Buffer.Buffer<(Principal, [UserPool])>(_userMap.size());
+        let buffer = Buffer.Buffer<(Principal, [Types.UserPool])>(_userMap.size());
         for ((key, value) in _userMap.entries()) {
             buffer.add((key, Buffer.toArray(value)));
         };
@@ -66,7 +58,7 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
     system func postupgrade() {
         _pools := [];
         for ((key, value) in _users.vals()) {
-            _userMap.put(key, Buffer.fromArray<UserPool>(value));
+            _userMap.put(key, Buffer.fromArray<Types.UserPool>(value));
         };
         _users := [];
         for ((key, value) in _aprs.vals()) {
@@ -139,7 +131,7 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
                             _userMap.put(user, userBuffer);
                         };
                         case(_){
-                            let buffer = Buffer.Buffer<UserPool>(1);
+                            let buffer = Buffer.Buffer<Types.UserPool>(1);
                             buffer.add(userInfo);
                             _userMap.put(user, buffer);
                         };
@@ -159,8 +151,8 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
         return true;
     };
 
-    public query func queryPool(user : Principal, offset : Nat, limit : Nat, stakingToken : ?Text, rewardToken : ?Text) : async Result.Result<Types.Page<UserPool>, Types.Page<UserPool>> {
-        let buffer = Buffer.Buffer<UserPool>(10);
+    public query func queryPool(user : Principal, offset : Nat, limit : Nat, stakingToken : ?Text, rewardToken : ?Text) : async Result.Result<Types.Page<Types.UserPoolInfo>, Types.Page<Types.UserPoolInfo>> {
+        let buffer = Buffer.Buffer<Types.UserPoolInfo>(10);
         let now = _getTime();
         switch (_userMap.get(user)) {
             case (?userBuffer) {
@@ -191,7 +183,7 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
                             case (?pool) {
                                 if ((pool.startTime <= now and pool.bonusEndTime >= now) or
                                  (userPool.userInfo.stakeAmount > 0 or userPool.userInfo.rewardTokenBalance > 0 or userPool.userInfo.stakeTokenBalance > 0)) {
-                                    buffer.add(userPool);
+                                    buffer.add({userPool with poolCreateTime = pool.createTime});
                                 };
                             };
                             case (_) {};
@@ -202,9 +194,10 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
             case (_) {};
         };
         if (buffer.size() > 0) {
+            buffer.sort(Types._poolCreateTimeCompare);
             return #ok({
                 totalElements = buffer.size();
-                content = CollectionUtils.arrayRange<UserPool>(Buffer.toArray(buffer), offset, limit);
+                content = CollectionUtils.arrayRange<Types.UserPoolInfo>(Buffer.toArray(buffer), offset, limit);
                 offset = offset;
                 limit = limit;
             });
@@ -223,6 +216,7 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
             buffer.add(pool);
         };
         if (buffer.size() > 0) {
+            buffer.sort(Types._createTimeCompare);
             return #ok({
                 totalElements = buffer.size();
                 content = CollectionUtils.arrayRange<Types.StakingPoolInfo>(Buffer.toArray(buffer), offset, limit);
@@ -304,7 +298,7 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
         };
         switch (_userMap.get(userPrincipal)) {
             case (?userBuffer) {
-                switch (Buffer.indexOf<UserPool>(userPool, userBuffer, _userPoolEqual)) {
+                switch (Buffer.indexOf<Types.UserPool>(userPool, userBuffer, _userPoolEqual)) {
                     case (?index) {
                         userBuffer.put(index, userPool);
                     };
@@ -315,7 +309,7 @@ shared (initMsg) actor class StakingPoolIndex(factoryId : Principal) = this {
                 _userMap.put(userPrincipal, userBuffer);
             };
             case (_) {
-                var userBuffer = Buffer.Buffer<UserPool>(1);
+                var userBuffer = Buffer.Buffer<Types.UserPool>(1);
                 userBuffer.add(userPool);
                 _userMap.put(userPrincipal, userBuffer);
             };
